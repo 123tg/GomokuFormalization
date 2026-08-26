@@ -4,4 +4,6 @@ import Gomoku.Rules
 import Gomoku.Game
 import Gomoku.Tactics
 import Gomoku.Certificate
+import Gomoku.Search
 import Gomoku.Examples
+import Gomoku.Adversarial

@@ -19,6 +19,12 @@ def other : Player → Player
 @[simp] theorem other_other (p : Player) : other (other p) = p := by
   cases p <;> rfl
 
+@[simp] theorem other_ne_self (p : Player) : other p ≠ p := by
+  cases p <;> simp
+
+@[simp] theorem self_ne_other (p : Player) : p ≠ other p := by
+  cases p <;> simp
+
 end Player
 
 inductive Cell where
@@ -60,6 +66,22 @@ theorem place_same (b : Board) (c : Coord) (p : Player) :
 theorem place_other (b : Board) {c d : Coord} (h : d ≠ c) (p : Player) :
     (place b c p).cell d = b.cell d := by
   simp [place, h]
+
+theorem place_commute_of_ne (b : Board) {c d : Coord} {p q : Player}
+    (h : c ≠ d) :
+    (place (place b c p) d q) = place (place b d q) c p := by
+  cases b with
+  | mk f =>
+    apply congrArg (fun g : Coord → Cell => Board.mk g)
+    funext x
+    by_cases hxc : x = c
+    · subst x
+      simp [place, h]
+    · by_cases hxd : x = d
+      · subst x
+        have hdc : d ≠ c := hxc
+        simp [place, h, hdc]
+      · simp [place, hxc, hxd]
 
 def count (b : Board) (p : Player) : Nat :=
   ((Finset.univ : Finset Coord).filter (fun c => b.cell c = .stone p)).card

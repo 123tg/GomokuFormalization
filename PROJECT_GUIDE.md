@@ -19,6 +19,91 @@ theorem initial_black_wins :
 
 因此，当前成果是一个可信的规则与策略形式化基础，而不是未经证实地声称黑棋必胜。
 
+## 当前进度（截至本次审计）
+
+项目按实施阶段编号管理，目标模式的 `active` 只表示最终目标尚未闭合，
+不表示已经完成的阶段会重新执行。
+
+- 阶段 1--4：规则、几何基础、可达性、不变量和有限博弈语义，已完成。
+- 阶段 5：直线型活三/活四、立即胜着和安全双活三语义，已完成。后续扩展的
+  `MaximalRun`、冻结断三模式和跳四模式也已完成；这不表示所有民间命名的断三
+  变体都被自动纳入，新增变体仍必须逐个冻结并证明。
+- 阶段 6：`CertificateTree`、`CompactCertificate`、节点检查器和
+  `compact_certificate_sound`，已完成。
+- 阶段 7：人工证书、错误证书拒绝、几何双活三反例和对抗性审计，已完成。
+  当前还包含一个覆盖 `opponentMoves` 全部合法应对的五节点局部正向证书，并加入
+  遗漏应手、越界引用、错误子局面和错误终局标签四种负向证书回归。
+- 阶段 8（核心接口已完成，模式扩展继续）：已补齐 `MaximalRun`、独立的 `brokenOpenThree`/`jumpFour`
+  模式表和跳四立即胜着定理；已建立不依赖轮次的 `WinningCells`/`HasDoubleThreat`
+  以及 `doubleThreat_forces_win` 统一博弈接口。新增 `FourExtensionCells`、
+  `straightOpenThree_has_fourExtension` 和 `HasDoubleFourThreat`，明确区分“落子后
+  形成四连的扩展点”和“立即成五的 `WinningCells`”；几何双活三到两个独立强制
+  胜点的 soundness 证明、更多断三变体和反击排除条件仍待完成。新增
+  `brokenOpenThree_has_fourExtension`，证明两个冻结断三模式填补内部缺口后至少
+  形成一个四连扩展点；新增 `OpenFourExtensionCells`、
+  `straightOpenFour_has_winningCell` 和 `openFourExtension_has_winningCell`，把
+  方向性开放四扩展连接到至少一个立即成五点；新增 `BrokenOpenThreeMove`、
+  `SafeBrokenOpenThree` 和 `safeBrokenOpenThree_forces_win`，将断三包装接入
+  `ForceWin`；新增 `ImmediateSafeBrokenOpenThree` 及其到安全谓词和
+  `CanForceWin` 的推论，但安全谓词仍要求显式提供所有防守后的 `CanForceWin`。
+  `Gomoku/Adversarial.lean` 现在包含一个仅有三个空点的有限断三安全局面，
+  由 `native_decide` 验证立即安全条件并通过该推论得到 `CanForceWin`；另有一个仅有
+  两个空点的黑棋双威胁局面，直接验证 `HasDoubleThreat` 并通过
+  `doubleThreat_forces_win` 得到 `CanForceWin`；另有一个黑棋填中心后产生横、竖
+  双四的局面，验证 `doubleThreat_move_forces_win` 的落子级桥接。上述局面都是局部
+  回归测试，不是全局 15×15 证书。另加入“黑棋几何双活三但白棋已有立即胜着”的
+  反例，并用 `not_safeDoubleOpenThree_of_opponentImmediate` 和
+  `not_immediateSafeDoubleOpenThree_of_opponentImmediate` 验证安全谓词不会误触发；
+  `winningCell_ne_of_hasDoubleThreat` 把“单步防守最多占一个胜点”的公共逻辑抽成
+  可复用定理。
+- 阶段 9（搜索器引导）已开始：`Gomoku.Search` 现在提供可执行的 225 点坐标表、
+  合法候选着法过滤、首个立即胜着扫描，以及局部立即胜着证书候选生成器。候选着法有
+  一个参考实现和一个把终局检查提到棋盘级别的 `candidateMovesFast` 实现；
+  `mem_candidateMovesFast_iff_mem_candidateMoves` 证明两者的成员关系一致。新增的
+  `orderedCandidateMoves` 只把有相邻棋子的空点提前，保留所有候选点；
+  `mem_orderedCandidateMoves_iff` 证明该排序不改变集合。
+  `tacticalCandidateMoves` 还定义了“立即胜着、必须防守、安静着法”三组候选的
+  分组接口，但当前默认搜索仍使用较轻量的 `immediateWinningMovesFirst`；必须防守
+  分组待增量威胁缓存后再启用。`winningCellsArray` 提供逐点数组接口；新增的
+  `coordIndex`/`coordAtIndex` 是经证明的 225 点行主序双射，`winningCellsMask` 使用固定
+  长度 225 的布尔向量缓存威胁，并有 `winningCellsMask_get_iff` 证明索引查询与
+  `WinningCells` 等价。`tacticalCandidateMovesFast` 使用该掩码并有
+  `mem_tacticalCandidateMovesFast_iff` 成员保持定理；它目前作为实验接口保留，尚未切换
+  默认搜索。新增 `createsFiveFast` 只检查包含新落子点的四个方向、五个窗口位置，最多
+  检查 20 个窗口；`createsFiveFast_sound` 和 `createsFiveFast_complete` 证明：在原局面
+  没有目标方五连时，它与落子后形成五连等价，`createsFiveFast_terminal_iff` 进一步把
+  合法轮次下的快速结果与 `terminal` 胜负标签对应起来。Search 文件中的回归例子覆盖
+  横、竖、两种斜线、边界窗口和不足五子的反例。
+  同一阶段还定义了无碰撞的 `PositionKey`（轮次加 225 格 `Vector Cell`）、
+  `boardKey_eq_iff`/`positionKey_eq_iff` 和 `containsPositionKey`；它们先作为置换表
+  的精确键接口验证，尚未把缓存剪枝接入深搜。
+  本轮又增加了 `SearchMemo`/`SearchKey` 适配层：键同时记录剩余深度、目标方和完整局面，
+  并给出缓存命中/未命中等价性引理以及 `checkedDepthCertificateForCached`。缓存得到的
+  候选树仍会重新经过局部证书检查，因此缓存不是可信证明来源；真正让递归搜索携带、更新
+  并利用置换表仍是下一阶段工作。
+  `checkLocalCertificate` 不改变全局根约束，而是允许任意局面作为局部证书根；
+  `twoPlyImmediateCertificate` 可从有限的“对手应手 -> 我方立即胜着”表生成完整
+  `opponentMoves` 证书，`immediateResponseTable` 则枚举所有合法对手应手并尝试自动
+  填表。新增的 `CandidateTree`/`searchCandidateTree` 支持有限深度的目标方选择、
+  对手全分支覆盖和终局叶子，并通过 `candidateTreeCertificate` 编译为紧凑证书；
+  `checkedDepthCertificateFor_sound` 只在局部根检查通过后给出 `CanForceWin`。
+  `firstWinningMove` 现在使用 `createsFiveFast` 扫描，`firstWinningMoveReference` 保留
+  完整 `terminal` 扫描以便回归比较；`immediateWinningMovesFirst_mem_legal` 和
+  `createsFiveFast_terminal_of_immediateCandidate` 证明快速命中只接受合法着法并对应
+  真实终局胜着。
+  `Gomoku/Adversarial.lean` 还用一个固定的五节点双威胁候选树回归测试了
+  `CandidateTree -> CompactCertificate -> checkLocalCertificateAt -> CanForceWin`
+  的完整链路；该测试覆盖对手节点的全部两个合法应手。真实 15×15 策略证书尚未导入，
+  因此 `initial_black_wins` 仍未声明。
+
+最近一次验证：`lake build` 全工程通过，随后单独编译 `Gomoku/Adversarial.lean`
+也通过。构建输出中的 linter 警告（文件头注释、
+测试模块使用 `native_decide`）不等同于 Lean 类型检查失败；核心 soundness 定理仍不
+依赖 `native_decide`。固定候选树回归已在单独构建中通过；在把终局检查提到棋盘级别后，
+两空点局面的 `checkedDepthCertificateFor 2` smoke test 也已通过。快速成五判定的四方向
+和边界回归，以及它和完整 `terminal` 的合法着法等价性也已通过。更深或更宽的搜索仍会
+反复扫描 225 点，暂不作为常规构建目标，待加入着法排序、局面缓存和增量终局计算后再扩展。
+
 ---
 
 ## 2. 给完全初学者的 Lean 说明
@@ -111,6 +196,7 @@ Fin 15 只允许 0 到 14，因此坐标不会越界。
 | Gomoku/Tactics.lean | WinningMoves、活三/活四和局部必胜定理 |
 | Gomoku/Certificate.lean | 依赖类型策略树和紧凑证书检查器 |
 | Gomoku/Examples.lean | 构造局面、正反例和 API 测试 |
+| Gomoku/Adversarial.lean | 对抗性反例、语义审计和证书拒绝测试 |
 | Gomoku.lean | 统一导入所有模块 |
 
 配置文件：
@@ -119,6 +205,7 @@ Fin 15 只允许 0 到 14，因此坐标不会越界。
 - lean-toolchain：Lean 4.33.0。
 - README.md：快速说明。
 - PROJECT_GUIDE.md：本完整方案和执行手册。
+- AUDIT_REPORT.md：对抗性审计发现、已修正问题和未解决风险。
 
 验证命令：
 
@@ -211,11 +298,23 @@ def straightOpenThree ... :=
 
 def straightOpenFour ... :=
   consecutive ... 4 ∧ openEnd ... (-1) ∧ openEnd ... 4
+
+def canonicalRunStart ... :=
+  ¬ occupiedAt ... (-1)
+
+def normalizedStraightOpenFour ... :=
+  straightOpenFour ... ∧ canonicalRunStart ...
 ~~~
 
 v1 只包含明确的直线型模式：连续三子或四子，两端都是空点。断三、跳四等变体没有默认并入，未来要作为独立模式加入。
 
-边界端点通过 step 得到 none，所以不能满足 openEnd，自然被视为封闭端。
+`canonicalRunStart` 把线段起点前不是同色棋子写成显式谓词，
+`normalizedStraightOpenThree` 和 `normalizedStraightOpenFour` 将其加入模式定义。
+由于现有活三/活四左端已经要求为空，Lean 已证明这些模式自动满足规范起点条件。
+见证集合使用规范化模式；边界端点通过 `step` 得到 `none`，所以不能满足 `openEnd`，自然被视为封闭端。
+`StartShiftConflict` 和 `ComparableRunStarts` 进一步明确了“同一连续段内的起点可比较”
+条件，并证明在该条件下直线型活三/活四起点唯一。这个结果不声称同一方向上
+所有分离的活三/活四只有一个见证；完整最大连续段关系仍需以后单独定义。
 
 ---
 
@@ -251,7 +350,8 @@ def Position.terminal (s : Position) : Option Outcome :=
   else none
 ~~~
 
-黑胜检查在白胜之前，但可达非终局局面不会出现双方同时胜利。落子形成黑五连后立即结束，不会进入白棋的后续回合。
+黑胜检查在白胜之前；`reachable_not_both_winners` 已证明任何可达局面都不会出现双方
+同时胜利，包括最后一步刚形成胜局的终局。落子形成黑五连后立即结束，不会进入白棋的后续回合。
 
 ### 7.3 合法着法和可达性
 
@@ -279,7 +379,7 @@ Reachable 排除了“随便写出的、不符合轮次或棋子数的棋盘”�
 - 合法落子严格减少空点数。
 - 可达局面轮到黑时，黑白棋子数相等。
 - 可达局面轮到白时，黑子数比白子数多 1。
-- 可达非终局局面不能同时有黑五连和白五连。
+- 任意可达局面不能同时有黑五连和白五连；该结论也覆盖终局。
 
 ---
 
@@ -293,7 +393,9 @@ def Strategy (target : Player) : Type :=
     {m : Coord // legalMove s m}
 ~~~
 
-这是“位置策略”：给定局面，只依赖当前棋盘和轮次选择着法。历史策略可以以后作为等价性研究，但 v1 不需要它。
+这是“位置策略”：给定局面，只依赖当前棋盘和轮次选择着法。为了区分“任意合法策略”
+和“确实获胜的策略”，项目进一步定义 `StrategyRealizes σ s hs`：目标玩家节点必须走
+`σ` 返回的坐标，对手节点必须覆盖每个合法应手，叶子必须是目标玩家获胜。
 
 ### 8.2 ForceWin
 
@@ -323,6 +425,14 @@ def CanForceWin (s : Position) (target : Player) : Prop :=
 
 - canForceWin_terminal：目标玩家已胜时可强制获胜。
 - canForceWin_immediate：存在立即胜着时可强制获胜。
+- `StrategyRealizes.sound`：具体策略实现胜利时推出 `CanForceWin`。
+- `canonicalWinningStrategy`：在可强制获胜区域选择保持胜势的着法；这是使用经典选择
+  构造的数学对象，不是可执行搜索器。
+- `canonicalWinningStrategy_realizes`：以空位数严格下降做强归纳，证明规范策略确实实现胜利。
+- `strategyRealizes_iff_canForceWin`：对可达根局面，存在获胜位置策略当且仅当
+  `CanForceWin`。
+- `strategyRealizes_iff_certificateTree`：把具体位置策略、依赖类型策略树和
+  `CanForceWin` 三个接口闭合为等价语义。
 
 ---
 
@@ -343,18 +453,24 @@ def ForcesWinAfter ...
 ### 9.2 活三和活四接口
 
 ~~~lean
+def GeometricDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop := ...
+def GeometricMoveCreatesSingleOpenFour (s : Position) (p : Player) (m : Coord) : Prop := ...
 def DoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop := ...
 def MoveCreatesSingleOpenFour (s : Position) (p : Player) (m : Coord) : Prop := ...
 def SingleOpenFour (s : Position) (p : Player) : Prop := ...
 def SafeDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop := ...
+def ImmediateSafeDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop := ...
 ~~~
 
 需要区分：
 
-- MoveCreatesSingleOpenFour：描述某一步之后的图形。
+- GeometricMoveCreatesSingleOpenFour：只描述原始 `play` 后的几何图形，不假设着法合法。
+- MoveCreatesSingleOpenFour：在几何条件之外，明确要求轮到该玩家且着法合法。
 - SingleOpenFour：描述当前局面中的图形。
-- DoubleOpenThree：一次落子后产生至少两个活三见证。
-- SafeDoubleOpenThree：在双活三几何条件之外，再加入对手立即胜着排除条件。
+- GeometricDoubleOpenThree：只描述原始 `play` 后至少两个活三见证。
+- DoubleOpenThree：在几何条件之外，明确要求轮到该玩家且着法合法。
+- SafeDoubleOpenThree：在严格双活三条件之外，排除第一步后的对手立即胜着，并要求对手每个合法防守后目标方仍满足 `CanForceWin`。这是多回合语义接口，不把“下一步立即成五”写成必要条件。
+- ImmediateSafeDoubleOpenThree：把上面的防守后条件加强为 `HasImmediateWin`，是一个更强的、便于小型战术验证的特例；已证明它蕴含 `SafeDoubleOpenThree`。
 
 ### 9.3 已完成的核心局部定理
 
@@ -377,6 +493,10 @@ theorem singleOpenFour_forces_win
     (hnoWhite : ¬ HasImmediateWin s .white) :
     CanForceWin s .black
 ~~~
+
+审计后增加了 `singleOpenFour_forces_win_minimal`。它去掉了数学上不必要的
+`¬ HasImmediateWin s .white` 前提；原 `singleOpenFour_forces_win` 保留该前提作为
+面向战术分类的安全包装接口。两者目前都只覆盖直线型活四。
 
 当前 v1 的图形含义只覆盖直线型活四；断三和跳四必须以后独立添加。
 
@@ -444,18 +564,44 @@ checkCertificate 当前检查：
 
 checkCertificate_header 能从检查成功中提取目标、根索引和根位置事实。
 
+审计后已补充用于可信转换的命题级引理：
+
+- `samePosition_true_iff`：布尔位置比较为真当且仅当两个 `Position` 相等。
+- `moveInBool_true_iff`：数组成员布尔判断为真当且仅当对应坐标出现在子着法数组中。
+- `checkNode_terminal_iff` 与 `checkNode_terminal_reify`：终局节点的布尔检查可以转换成
+  `CertificateTree` 的终局构造。
+- `checkNode_proverMove_iff`、`childPositionMatches_true_iff` 和
+  `checkNodeAt_proverMove_iff`：为合法着法、严格递增索引和子局面相等性提供命题形式。
+- `allRefsValid_true_iff`、`allMovesLegal_true_iff` 和
+  `allLegalMovesCovered_true_iff`：把数组布尔检查转换为引用有效性、合法性和完整覆盖。
+- `checkNodeAt_terminal_iff` 与 `checkNodeAt_opponentMoves_iff`：覆盖终局节点和对手分支。
+- `mapIdx_all_true_iff` 与 `checkCertificate_nodes_checked`：把全局数组检查转换为每个节点的检查事实。
+- `compact_reify_at`：以 `nodes.size - index` 为严格下降量，在 Lean 内重建依赖类型的策略树。
+- `compact_certificate_sound`：把通过检查的紧凑证书连接到 `CanForceWin initialPosition .black`。
+- `certificateTree_iff_canForceWin`：在 `Nonempty` 形式下证明策略树与统一博弈语义等价；
+  `ForceWin.nonemptyCertificateTree` 通过命题级递归完成反向转换。
+- `Gomoku.Search`：定义 `Searcher`、`CheckedSearchResult` 和
+  `acceptCertificate`，明确外部搜索算法不属于可信基础；另外提供
+  `immediateWinCertificate` 原型及其节点检查、策略树重建和 soundness 定理。
+- `Position.not_isTerminal_of_terminal_none` 与
+  `Position.exists_legalMove_of_terminal_none`：证明非终局局面一定存在合法着法；
+  `defaultStrategy` 提供只保证合法性的基线策略，不能替代胜利策略。
+
+双活三的安全语义现在明确写成 `SafeDoubleOpenThree`：除合法双活三外，第一步后的局面必须非终局、对手没有立即胜着，并且对手的每一个合法防守后目标方仍有 `CanForceWin`。`ImmediateSafeDoubleOpenThree` 是把这项条件加强为立即胜着的特例。两个谓词都与纯几何的 `GeometricDoubleOpenThree` 分离；因此“对手不能同时堵住两个威胁”等自然语言不再承担形式化含义。
+
 ### 10.4 当前限制
 
-紧凑检查器还没有完成：
+紧凑检查器到策略树的可信转换已经完成：
 
 ~~~text
 checkCertificate c = true
-    -> 重建 CertificateTree
+    -> compact_reify_at 重建 CertificateTree
     -> 使用 CertificateTree.sound
     -> 得到 CanForceWin initialPosition .black
 ~~~
 
-所以现在不能把 checkCertificate 通过直接写成全局必胜定理。必须先实现经过 Lean 检查的 DAG 重建递归。
+因此，未来的真实全局证书可以直接使用 `compact_certificate_sound`。当前仍不能声明
+`initial_black_wins`，因为项目尚未导入一个实际覆盖全部白棋应对的 15×15 策略证书。
 
 ---
 
@@ -477,15 +623,23 @@ checkCertificate c = true
 - [x] 直线型活四产生黑棋立即胜着的证明。
 - [x] CertificateTree 及其 soundness。
 - [x] CompactCertificate 和结构性检查器。
+- [x] 第一批对抗性反例、证书拒绝测试和战术合法性包装。
+- [x] 两节点正向证书、`compact_reify_at` 重建回归测试，以及立即胜着证书生成器原型。
 - [x] 横向、斜线、边界、六连、终局和非法着法测试。
 - [x] lake build 全工程构建成功。
 
 尚未完成：
 
-- [ ] 规范化线段和唯一活三/活四见证。
-- [ ] 断三、跳四等变体。
+- [x] 规范化见证及可比较起点下的唯一活三/活四定理。
+- [x] 完整最大连续段关系及其可比较重叠起点的唯一性定理。
+- [x] 断三、跳四的独立几何模式表和边界/直线反例。
+- [x] 跳四填补缺口的立即胜着定理（`jumpFour_black_immediate`）。
 - [ ] 完整双活三强制性定理。
-- [ ] 紧凑证书到 CertificateTree 的可信转换。
+- [x] 双活三多回合安全谓词和立即响应特例的博弈 soundness 定理。
+- [x] 紧凑证书到 CertificateTree 的可信转换。
+- [x] 外部搜索器与 Lean 校验器之间的最小适配接口。
+- [x] 非终局合法着法存在性与默认合法策略接口。
+- [x] CertificateTree 与 CanForceWin 的双向等价接口。
 - [ ] 对称性压缩的独立正确性证明。
 - [ ] 实际 15×15 策略证书。
 - [ ] initial_black_wins。
@@ -503,12 +657,15 @@ checkCertificate c = true
 做法：
 
 1. 定义连续段的规范起点，例如前一格不是同色或已经到边界。
-2. 证明规范起点唯一。
+2. 对起点沿同一段发生正偏移的情形定义 `StartShiftConflict`，证明可比较起点唯一；
+   `MaximalRun` 现在显式记录连续性和两端不可延伸性，并有
+   `maximalRun_unique_of_comparable`。
 3. 修改 openThreeWitnesses/openFourWitnesses，只收集规范见证。
-4. 补 step 在 -1、0、3、4 偏移下的引理。
+4. 将 `step` 的前一格和偏移关系写成可复用引理。
 5. 对四个方向分别补正例、边界反例和长连测试。
 
-完成标准：重复起点不会重复计数，边界行为由定理而不是注释决定。
+完成标准：重复起点不会重复计数，边界行为由定理而不是注释决定。该标准已达到；
+分离的同方向连续段仍被允许同时存在。
 
 ### 阶段 B：逐级完成局部战术
 
@@ -522,11 +679,30 @@ checkCertificate c = true
 4. 证明一次落子产生两个不同活三见证。
 5. 证明一次对手落子不能同时堵住两个独立胜点。
 6. 排除对手防守时同时产生立即胜着或反击四。
-7. 将这些引理组合成 SafeDoubleOpenThree 的完整定理。
+7. 将这些引理组合成 `SafeDoubleOpenThree` 的完整定理（多回合安全谓词和
+   `safeDoubleOpenThree_forces_win` 已完成；立即胜着特例
+   `ImmediateSafeDoubleOpenThree` 及其蕴含关系也已完成）。
+8. 继续证明几何双活三到安全谓词的充分性；若标准直线活三不足以支持该结论，
+   必须新增独立的威胁/反击模式，而不能把断三或跳四隐式并入当前定义。
+
+当前已增加 `FourExtensionCells` 作为中间威胁层。`straightOpenThree_has_fourExtension`
+证明每个直线活三至少有一个形成四连的扩展点；`HasDoubleFourThreat` 只表达存在
+两个扩展点，不能单独推出 `CanForceWin`。十字双活三反例同时验证：该局面有多个
+四连扩展点，但没有立即成五的 `WinningCells`，因此几何双活三不能被错误提升为
+立即双威胁。
+
+当前已加入 `brokenOpenThree` 和 `jumpFour` 两个独立模式。`jumpFour` 已有
+`jumpFour_black_immediate`：在黑棋回合、非终局且模式成立时，填补唯一缺口立即形成
+五连。`brokenOpenThree_has_fourExtension` 证明断三的内部缺口可以形成四连；
+`OpenFourExtensionCells` 和 `openFourExtension_has_winningCell` 进一步记录方向性
+开放四并给出至少一个立即成五点。`BrokenOpenThreeMove`、`SafeBrokenOpenThree`、
+`safeBrokenOpenThree_forces_win` 以及 `ImmediateSafeBrokenOpenThree` 已把断三接入
+合法着法和显式防守后博弈语义；剩余工作是继续冻结更多断三变体并为它们补齐独立的
+反击排除条件，不能因为存在任意几何断三就直接宣称必胜。
 
 每一个战术都要有正例、边界反例、断三反例，以及对手已有立即胜着时不触发的语义反例。
 
-### 阶段 C：小型策略证书
+### 阶段 C：小型策略证书（可信转换已完成）
 
 目标：先验证证书 soundness，不直接搜索 15×15。
 
@@ -537,19 +713,16 @@ checkCertificate c = true
 3. 确认错误证书被 Bool 检查器拒绝。
 4. 实现按节点索引逆序的 DAG 递归：子节点索引必须大于父节点，所以构造父节点时子树已经可用。
 5. 让递归函数返回 CertificateTree，而不只是 Bool。
-6. 证明小证书的 compact soundness。
+6. 证明小证书的 compact soundness（已由 `compact_certificate_sound` 覆盖）。
+7. 使用 `immediateWinCertificate` 生成两节点候选，验证“外部生成、Lean 检查、策略树重建”的最小闭环。
 
-完成标准：
+完成标准：能够从通过检查的紧凑证书得到 `CanForceWin`；当前统一接口
+`compact_certificate_sound` 已达到这一标准。
 
-~~~lean
-theorem compact_certificate_sound_small ...
-~~~
+### 阶段 D：完成紧凑证书可信转换（已完成）
 
-能够从通过检查的紧凑证书得到 CanForceWin。
-
-### 阶段 D：完成紧凑证书可信转换
-
-目标：把结构检查升级为真正的 soundness。
+目标：把结构检查升级为真正的 soundness。该阶段已完成，关键结果是
+`compact_certificate_sound`。
 
 需要证明：
 
@@ -561,15 +734,15 @@ theorem compact_certificate_sound_small ...
 6. opponentMoves 节点覆盖全部合法对手着法。
 7. 根节点是 initialPosition，目标是黑棋。
 
-建议的实现思路：
+实现采用以下思路：
 
 - 对节点索引或剩余节点数量做归纳。
 - 使用 Fin 表示已经证明有效的数组索引。
 - 对每个节点返回依赖类型 CertificateTree。
 - 把 Bool 检查结果拆成一组显式等式和 forall 证明。
-- 先做只包含树、不含共享子树的版本，再扩展到 DAG。
+- 直接按严格递增索引处理数组 DAG；共享子树通过索引复用，不需要复制证明对象。
 
-最终接口应接近：
+最终接口已经是：
 
 ~~~lean
 theorem compact_certificate_sound
@@ -577,18 +750,79 @@ theorem compact_certificate_sound
     CanForceWin initialPosition .black
 ~~~
 
+下一阶段不再修改这条 soundness 链，而是生成并导入真实的策略证书。
+
 ### 阶段 E：外部搜索器
 
 目标：让搜索器生成候选证书，但不把搜索器本身作为可信基础。
 
-建议：
+当前已提供 `Gomoku.Search` 适配层和最小可执行搜索原语，但尚未实现完整的 15×15
+策略搜索。现有原语包括：
 
-1. 优先生成 Lean 源码中的 CompactCertificate 值，避免未经验证的文本解析器。
+- `coordAtIndex`/`allCoords`：用 `Fin 225` 构造完整棋盘坐标，避免依赖
+  `Finset.toList` 的不可执行路径。
+- `candidateMoves`：只在轮到目标玩家且局面非终局时返回合法空点。
+  `mem_candidateMoves_iff` 将数组成员精确对应为轮次、完整坐标表成员和 `legalMove`；
+  `candidateMovesFast` 复用一次位置级终局检查，`mem_candidateMovesFast_iff` 及其与参考
+  实现的等价引理保证优化不改变候选集合；`orderedCandidateMoves` 在搜索中优先尝试
+  局部邻近点，但不删除远处着法；`immediateWinningMovesFirst` 再把直接成五的着法
+  提到最前；`tacticalCandidateMovesFast` 则在同一候选全集中把对手立即胜点防守提前。
+- `firstWinningMove`：扫描候选着法寻找立即胜着。
+- `immediateCertificateFor`：把局部立即胜着包装成候选 `CompactCertificate`。
+  该候选的根可以是局部位置，所以只能用 `checkNodeAt` 做局部检查；全局
+  `checkCertificate` 仍要求根是空棋盘黑先。
+- `immediateCertificateNodesChecked_sound`：从两个局部节点的 Bool 检查结果提取
+  合法落子和终局胜负事实，并推出该局面的 `CanForceWin`；它不放宽全局证书的根约束。
+
+后续完整搜索仍应遵循：
+
+1. 优先生成 Lean 源码中的 `CompactCertificate` 值，避免未经验证的文本解析器；
+   搜索器可以实现为 `Searcher`，结果通过 `CheckedSearchResult` 或
+   `acceptCertificate` 进入 Lean。
 2. 搜索器优先处理立即胜着和必须防守的对手威胁。
 3. 使用置换表和局面缓存减少重复局面。
 4. 先不把旋转/反射压缩放入可信内核。
 5. 如果加入对称性压缩，必须另外证明坐标变换保持合法着法、终局和 CanForceWin。
 6. 搜索器输出后，所有可信结论仍由 Lean 重新检查。
+
+本阶段新增的最小可复用接口：
+
+```lean
+def checkLocalCertificate (c : CompactCertificate) : Bool
+def twoPlyImmediateCertificate (s : Position) (p : Player)
+    (responses : Array (Coord × Coord)) : CompactCertificate
+def immediateResponseTable (s : Position) (p : Player) :
+    Option (Array (Coord × Coord))
+def twoPlyCertificateFor (s : Position) (p : Player) :
+    Option CompactCertificate
+```
+
+`twoPlyImmediateCertificate_sound` 和 `checkedTwoPlyCertificateFor_sound`
+把通过检查的局部两层证书连接到 `CanForceWin`。生成器只负责提出候选表；
+合法性、终局、索引严格递增、子位置匹配以及对手应手全覆盖仍由 Lean
+检查器负责。`Adversarial.lean` 中的 `generatedForkCertificate` 是这一接口
+的回归样例。
+
+有限深度搜索接口为：
+
+```lean
+inductive CandidateTree
+def searchCandidateTree (fuel : Nat) (s : Position) (target : Player) :
+    Option CandidateTree
+def checkedDepthCertificateFor (fuel : Nat) (s : Position) (target : Player) :
+    Option CompactCertificate
+theorem checkedDepthCertificateFor_sound ... : CanForceWin s target
+```
+
+`fuel` 是搜索深度上限，不是可信证明的假设；深度不足时搜索返回 `none`。
+每个成功结果仍要通过 `checkLocalCertificateAt`，因此搜索树的递归实现和启发式
+可以以后替换，而不改变可信证明层。
+
+当前回归覆盖两个层次：固定五节点对手分支树验证编译器和检查器，两个空点局面的
+深度 2 搜索验证递归搜索的最小闭环。`tacticalCandidateMovesFast` 已把对手立即胜点
+预先扫描为固定长度掩码，并由成员等价性定理保证不改变候选集合；掩码构造目前仍会
+重新计算整盘威胁，且尚无增量威胁缓存，所以它目前作为可选实验接口，不接入默认深搜。这不意味着
+已经有可扩展的 15×15 求解器，也不改变外部搜索器不属于可信基础的约定。
 
 ### 阶段 F：导入证书并证明最终定理
 
@@ -687,16 +921,19 @@ lake env lean Gomoku/Examples.lean
 
 - 没有实际 15×15 必胜策略证书。
 - 没有 initial_black_wins。
-- 紧凑证书检查器尚未连接到 CertificateTree。
+- 紧凑证书检查器已经通过 `compact_reify_at` 连接到 `CertificateTree`，并由
+  `compact_certificate_sound` 给出可信的全局 soundness。
 - v1 活三/活四只覆盖冻结的直线型模式。
 
-正确的后续顺序是：
+项目已经完成规则、几何、博弈、证书和对抗性审计的核心工作；当前处于阶段 9，正在
+扩展可验证的搜索器并优化候选生成。完整路线是：
 
 ~~~text
-规范化几何
-  -> 完成双活三等局部定理
-  -> 小型证书 soundness
-  -> 紧凑证书可信转换
+规范化几何（已完成 v1）
+  -> 局部战术和反例审计（核心已完成，模式继续扩展）
+  -> 小型证书 soundness（已完成）
+  -> 紧凑证书可信转换（已完成）
+  -> 外部搜索器生成更深证书（当前）
   -> 外部搜索器生成 15×15 证书
   -> Lean 检查证书
   -> 证明 initial_black_wins

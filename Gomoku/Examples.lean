@@ -50,6 +50,16 @@ example : legalMove initialPosition center := by
   · exact Position.initial_not_terminal
   · rfl
 
+example : ∃ c, legalMove initialPosition c := by
+  exact Position.exists_legalMove_of_terminal_none (by
+    exact Position.terminal_none_of_not_isTerminal Position.initial_not_terminal)
+
+example : legalMove initialPosition
+    ((defaultStrategy .black initialPosition Position.Reachable.initial rfl (by
+      exact Position.terminal_none_of_not_isTerminal Position.initial_not_terminal)).1) := by
+  exact defaultStrategy_legal .black initialPosition Position.Reachable.initial rfl
+    (Position.terminal_none_of_not_isTerminal Position.initial_not_terminal)
+
 example : (play initialPosition center).turn = .white := by
   rfl
 
@@ -83,6 +93,14 @@ example : Board.emptyCount (Board.place Board.empty center .black) + 1 =
 
 example : Position.countBlack (Position.play initialPosition center) = 1 := by
   native_decide
+
+example {s : Position} (h : Reachable s) :
+    ¬ (hasAtLeastFive s.board .black ∧ hasAtLeastFive s.board .white) := by
+  exact Position.reachable_not_both_winners h
+
+example {s : Position} {p : Player} (hs : Reachable s) :
+    (∃ σ : Strategy p, StrategyRealizes σ s hs) ↔ CanForceWin s p := by
+  exact strategyRealizes_iff_canForceWin hs
 
 example {s : Position} {p : Player}
     (h : terminal s = some (winner p)) : CanForceWin s p :=

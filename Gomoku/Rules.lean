@@ -76,6 +76,27 @@ theorem terminal_outcome_isTerminal {s : Position} {o : Outcome}
       · exact Or.inr (Or.inr ‹Board.full s.board›)
       · simp at h
 
+theorem terminal_winner_hasAtLeastFive {s : Position} {p : Player}
+    (h : terminal s = some (winner p)) :
+    hasAtLeastFive s.board p := by
+  cases p with
+  | black =>
+      simp only [winner] at h
+      unfold terminal at h
+      split at h
+      · assumption
+      · split at h
+        · simp at h
+        · split at h <;> simp at h
+  | white =>
+      simp only [winner] at h
+      unfold terminal at h
+      split at h
+      · simp at h
+      · split at h
+        · assumption
+        · split at h <;> simp at h
+
 theorem terminal_outcome_no_legal {s : Position} {o : Outcome}
     (h : terminal s = some o) (c : Coord) : ¬ legalMove s c := by
   exact terminal_no_legal (terminal_outcome_isTerminal h) c
@@ -89,6 +110,37 @@ theorem terminal_none_of_not_isTerminal {s : Position} (h : ¬ isTerminal s) :
     terminal s = none := by
   unfold terminal
   split <;> simp_all [isTerminal]
+
+theorem not_isTerminal_of_terminal_none {s : Position}
+    (h : terminal s = none) : ¬ isTerminal s := by
+  intro hs
+  rcases hs with hb | hw | hf
+  · by_cases hb' : hasAtLeastFive s.board .black
+    · simp [terminal, hb'] at h
+    · exact (hb' hb).elim
+  · by_cases hb' : hasAtLeastFive s.board .black
+    · simp [terminal, hb'] at h
+    · simp [terminal, hb', hw] at h
+  · by_cases hb' : hasAtLeastFive s.board .black
+    · simp [terminal, hb'] at h
+    · by_cases hw' : hasAtLeastFive s.board .white
+      · simp [terminal, hb', hw'] at h
+      · simp [terminal, hb', hw', hf] at h
+
+theorem exists_legalMove_of_terminal_none {s : Position}
+    (h : terminal s = none) : ∃ c, legalMove s c := by
+  have hnotfull : ¬ Board.full s.board := by
+    intro hfull
+    exact (not_isTerminal_of_terminal_none h)
+      (Or.inr (Or.inr hfull))
+  have hempty : ∃ c, s.board.cell c = .empty := by
+    by_contra hne
+    apply hnotfull
+    intro c
+    by_contra hc
+    exact hne ⟨c, hc⟩
+  rcases hempty with ⟨c, hc⟩
+  exact ⟨c, ⟨not_isTerminal_of_terminal_none h, hc⟩⟩
 
 theorem initial_not_terminal : ¬ isTerminal initial := by
   intro h
@@ -125,6 +177,28 @@ theorem play_emptyCount_lt {s : Position} {c : Coord} (hlegal : legalMove s c) :
     Board.emptyCount (play s c).board < Board.emptyCount s.board := by
   have h := play_emptyCount_succ hlegal
   omega
+
+/- A legal move starts from a position with no winner.  The newly placed
+   stone may create a line only for the mover, so the child cannot contain
+   winning lines for both players. -/
+theorem play_not_both_winners {s : Position} {c : Coord}
+    (hlegal : legalMove s c) :
+    ¬ (hasAtLeastFive (play s c).board .black ∧
+      hasAtLeastFive (play s c).board .white) := by
+  intro hboth
+  cases hturn : s.turn with
+  | black =>
+      have hwhite : hasAtLeastFive s.board .white := by
+        apply hasAtLeastFive_of_place_other (p := .white) (q := .black)
+          (r := c) (by simp)
+        simpa [play, hturn] using hboth.2
+      exact hlegal.1 (Or.inr (Or.inl hwhite))
+  | white =>
+      have hblack : hasAtLeastFive s.board .black := by
+        apply hasAtLeastFive_of_place_other (p := .black) (q := .white)
+          (r := c) (by simp)
+        simpa [play, hturn] using hboth.1
+      exact hlegal.1 (Or.inl hblack)
 
 theorem reachable_count_invariant {s : Position} (h : Reachable s) :
     (match s.turn with
@@ -163,11 +237,14 @@ theorem reachable_count_invariant {s : Position} (h : Reachable s) :
             simpa [countBlack, countWhite, hturn] using ih
           exact ih'
 
-theorem reachable_not_both_winners {s : Position} (h : Reachable s)
-    (hnterm : ¬ isTerminal s) :
+theorem reachable_not_both_winners {s : Position} (h : Reachable s) :
     ¬ (hasAtLeastFive s.board .black ∧ hasAtLeastFive s.board .white) := by
-  intro hboth
-  exact hnterm (Or.inl hboth.1)
+  cases h with
+  | initial =>
+      intro hboth
+      exact initial_not_terminal (Or.inl hboth.1)
+  | step _ hlegal =>
+      exact play_not_both_winners hlegal
 
 end Position
 
