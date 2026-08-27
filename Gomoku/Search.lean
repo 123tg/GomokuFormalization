@@ -13,8 +13,10 @@ structure SearchConfig where
   target : Player := .black
   maxNodes : Nat := 0
   deriving Repr
+-- 配置搜索目标玩家与节点预算；`maxNodes = 0` 约定为由具体搜索器自行解释的默认预算。
 
 abbrev Searcher := SearchConfig → Option CompactCertificate
+-- 把搜索器抽象为从配置到可选紧凑证书的函数，失败时返回 `none`。
 
 /- The searcher may need a complete executable move list, but this helper is
    deliberately outside the trusted certificate checker.  `Fin 225` indexes
@@ -22,15 +24,18 @@ abbrev Searcher := SearchConfig → Option CompactCertificate
    inside the board by construction. -/
 def coordAtIndex (i : Fin 225) : Coord :=
   (⟨i.1 / 15, by omega⟩, ⟨i.1 % 15, by omega⟩)
+-- 按行优先顺序把 `0 ≤ i < 225` 的索引还原为合法的 15×15 棋盘坐标。
 
 def allCoords : Array Coord :=
   Array.ofFn coordAtIndex
+-- 依次枚举棋盘上的全部 225 个坐标。
 
 /- A stable row-major index for a coordinate.  Keeping this inverse to
    `coordAtIndex` lets later search code use O(1) array lookup for masks and
    cached threat information instead of linear `Array.mem` scans. -/
 def coordIndex (c : Coord) : Fin 225 :=
   ⟨c.1.1 * 15 + c.2.1, by omega⟩
+-- 按行优先顺序把棋盘坐标编码为 `Fin 225` 索引。
 
 theorem coordAtIndex_coordIndex (c : Coord) :
     coordAtIndex (coordIndex c) = c := by
@@ -38,6 +43,7 @@ theorem coordAtIndex_coordIndex (c : Coord) :
   · apply Fin.ext
     simp [coordAtIndex, coordIndex]
     omega
+-- 证明坐标先编码再解码仍得到原坐标，即 `coordAtIndex` 是 `coordIndex` 的左逆。
   · apply Fin.ext
     simp [coordAtIndex, coordIndex]
 
@@ -46,21 +52,26 @@ theorem coordIndex_coordAtIndex (i : Fin 225) :
   apply Fin.ext
   simp [coordAtIndex, coordIndex]
   omega
+-- 证明索引先解码再编码仍得到原索引，即两个行优先转换互为逆映射。
 
 /- An exact, executable row-major key for transposition tables.  The key is
    intentionally a lossless `Array Cell`, so a later cache cannot merge two
    different board positions by hash collision. -/
 abbrev PositionKey := Player × Vector Cell 225
+-- 用当前行棋方和无损的 225 格棋盘向量共同表示局面键，避免哈希碰撞影响正确性。
 
 def boardKey (b : Board) : Vector Cell 225 :=
   Vector.ofFn (fun i => b.cell (coordAtIndex i))
+-- 把函数式棋盘按行优先顺序展开为固定长度向量。
 
 def positionKey (s : Position) : PositionKey :=
   (s.turn, boardKey s.board)
+-- 提取局面的完整缓存键，同时保留棋盘与轮到哪一方的信息。
 
 theorem boardKey_get (b : Board) (c : Coord) :
     (boardKey b).get (coordIndex c) = b.cell c := by
   simp [boardKey, coordAtIndex_coordIndex]
+-- 说明通过坐标对应索引读取棋盘键，得到的格子与原棋盘在该坐标的内容一致。
 
 theorem boardKey_eq_iff (b₁ b₂ : Board) :
     boardKey b₁ = boardKey b₂ ↔ b₁ = b₂ := by
@@ -77,6 +88,7 @@ theorem boardKey_eq_iff (b₁ b₂ : Board) :
   · intro h
     cases h
     rfl
+-- 证明两个棋盘键相等当且仅当两个函数式棋盘相等，因此 `boardKey` 不丢失信息。
 
 theorem positionKey_eq_iff (s t : Position) :
     positionKey s = positionKey t ↔ s = t := by
@@ -98,22 +110,27 @@ theorem positionKey_eq_iff (s t : Position) :
   · intro h
     cases h
     rfl
+-- 证明两个局面键相等当且仅当两个局面相等，为换位表的精确复用提供依据。
 
 abbrev TranspositionTable := Array PositionKey
+-- 用局面键数组表示最简单的换位表。
 
 def containsPositionKey (table : TranspositionTable) (s : Position) : Bool :=
   table.any (fun k => k = positionKey s)
+-- 可执行地判断换位表中是否已经记录给定局面。
 
 theorem containsPositionKey_true_iff (table : TranspositionTable) (s : Position) :
     containsPositionKey table s = true ↔
       ∃ i, ∃ (h : i < table.size), table[i] = positionKey s := by
   simp [containsPositionKey]
+-- 把布尔查表成功刻画为：数组中存在一个合法下标，其元素等于该局面键。
 
 def candidateMoves (s : Position) (p : Player) : Array Coord :=
   if s.turn = p then
     allCoords.filter (fun c => decide (legalMove s c))
   else
     #[]
+-- 参考版候选生成器：仅当轮到 `p` 时枚举全部合法落子。
 
 /- `candidateMoves` is the simple reference implementation.  The fast
    variant factors the position-level terminal test out of the per-cell
@@ -126,6 +143,7 @@ def candidateMovesFast (s : Position) (p : Player) : Array Coord :=
       #[]
   else
     #[]
+-- 优化版候选生成器：先统一排除终局，再只按空格过滤，从而避免对每个坐标重复检查终局。
 
 theorem mem_candidateMovesFast_iff (s : Position) (p : Player) (c : Coord) :
     c ∈ candidateMovesFast s p ↔
@@ -149,30 +167,35 @@ theorem mem_candidateMovesFast_iff (s : Position) (p : Player) (c : Coord) :
       intro _ hlegal
       exact hlegal.1 hterm'
   · simp [candidateMovesFast, hturn]
+-- 精确刻画快速候选数组的成员条件：轮到 `p`、坐标在全盘枚举中且该步合法。
 
 theorem mem_candidateMoves_iff (s : Position) (p : Player) (c : Coord) :
     c ∈ candidateMoves s p ↔
       s.turn = p ∧ c ∈ allCoords ∧ legalMove s c := by
   by_cases hturn : s.turn = p
   · simp [candidateMoves, hturn]
+-- 精确刻画参考候选数组的成员条件。
   · simp [candidateMoves, hturn]
 
 theorem mem_candidateMovesFast_iff_mem_candidateMoves (s : Position) (p : Player)
     (c : Coord) :
     c ∈ candidateMovesFast s p ↔ c ∈ candidateMoves s p := by
   rw [mem_candidateMovesFast_iff, mem_candidateMoves_iff]
+-- 证明快速实现与参考实现生成完全相同的候选集合，优化只改变计算方式。
 
 def neighborSteps : Array (Direction × Int) :=
   #[(.horizontal, -1), (.horizontal, 1),
     (.vertical, -1), (.vertical, 1),
     (.diagonalUp, -1), (.diagonalUp, 1),
     (.diagonalDown, -1), (.diagonalDown, 1)]
+-- 列出某坐标沿四条棋线向正反两侧移动一步的八种邻接方式。
 
 def hasOccupiedNeighbor (s : Position) (c : Coord) : Bool :=
   neighborSteps.any (fun x =>
     match step c x.1 x.2 with
     | some q => decide (s.board.cell q ≠ .empty)
     | none => false)
+-- 判断坐标 `c` 的八邻域内是否至少有一个已落子坐标。
 
 /- Search local moves first, but retain every legal move.  This ordering is
    used only by the untrusted searcher; the theorem below records that it does
@@ -181,6 +204,7 @@ def orderedCandidateMoves (s : Position) (p : Player) : Array Coord :=
   let moves := candidateMovesFast s p
   moves.filter (hasOccupiedNeighbor s) ++
     moves.filter (fun c => !(hasOccupiedNeighbor s c))
+-- 在不删减合法步的前提下，把邻近已有棋子的候选排在孤立候选之前。
 
 theorem mem_orderedCandidateMoves_iff (s : Position) (p : Player) (c : Coord) :
     c ∈ orderedCandidateMoves s p ↔ c ∈ candidateMovesFast s p := by
@@ -188,18 +212,22 @@ theorem mem_orderedCandidateMoves_iff (s : Position) (p : Player) (c : Coord) :
   by_cases h : hasOccupiedNeighbor s c
   · simp [h]
   · cases hvalue : hasOccupiedNeighbor s c <;> simp_all
+-- 证明候选排序保持成员集合不变，因此该启发式不影响搜索完备性。
 
 def searchDirections : Array Direction :=
   #[.horizontal, .vertical, .diagonalUp, .diagonalDown]
+-- 枚举五子连线可能采用的四个无向方向。
 
 def fiveBackOffsets : Array Int :=
   #[0, 1, 2, 3, 4]
+-- 枚举新落子在长度为五的窗口中可能占据的五个位置。
 
 def fiveWindowAt (b : Board) (p : Player) (m : Coord)
     (d : Direction) (back : Int) : Bool :=
   match step m d (-back) with
   | some start => decide (consecutive (b.place m p) p start d 5)
   | none => false
+-- 检查以 `m` 向方向 `d` 回退 `back` 格为起点的五格窗口，落子后是否全属于 `p`。
 
 /- Only a five-cell window containing the newly placed stone can be newly
    created.  This executable predicate checks the four directions and five
@@ -207,6 +235,7 @@ def fiveWindowAt (b : Board) (p : Player) (m : Coord)
 def createsFiveFast (b : Board) (p : Player) (m : Coord) : Bool :=
   searchDirections.any (fun d =>
     fiveBackOffsets.any (fiveWindowAt b p m d))
+-- 至多检查 4×5 个包含新落子 `m` 的窗口，快速判断该步是否新形成五连。
 
 theorem createsFiveFast_sound {b : Board} {p : Player} {m : Coord}
     (h : createsFiveFast b p m = true) :
@@ -220,6 +249,7 @@ theorem createsFiveFast_sound {b : Board} {p : Player} {m : Coord}
   · rename_i start hstep
     exact ⟨start, d, of_decide_eq_true hwindow⟩
   · simp at hwindow
+-- 证明快速判定为真时，落子后的棋盘确实存在玩家 `p` 的至少五连。
 
 theorem createsFiveFast_complete {b : Board} {p : Player} {m : Coord}
     (hold : ¬ hasAtLeastFive b p)
@@ -248,11 +278,13 @@ theorem createsFiveFast_complete {b : Board} {p : Player} {m : Coord}
   rw [createsFiveFast, Array.any_eq_true']
   exact ⟨d, hdirection, (Array.any_eq_true').2
     ⟨(n.1 : Int), hback, hwindow⟩⟩
+-- 在落子前不存在旧五连的前提下，证明落子后出现五连一定会被快速窗口检查发现。
 
 theorem createsFiveFast_iff {b : Board} {p : Player} {m : Coord}
     (hold : ¬ hasAtLeastFive b p) :
     createsFiveFast b p m = true ↔ hasAtLeastFive (b.place m p) p := by
   exact ⟨createsFiveFast_sound, createsFiveFast_complete hold⟩
+-- 合并可靠性与完备性：没有旧五连时，快速判定与落子后存在五连等价。
 
 theorem createsFiveFast_terminal
     {s : Position} {p : Player} {m : Coord}
@@ -276,6 +308,7 @@ theorem createsFiveFast_terminal
           simpa [hturn] using hchild
         exact hlegal.1 (Or.inl hparent)
       simp [terminal, Position.terminal, winner, hfive, hblack]
+-- 证明合法且通过快速五连检查的当前玩家落子，会使子局面终局结果等于该玩家获胜。
 
 theorem createsFiveFast_terminal_iff
     {s : Position} {p : Player} {m : Coord}
@@ -294,17 +327,20 @@ theorem createsFiveFast_terminal_iff
     · have hfive := Position.terminal_winner_hasAtLeastFive hterminal
       change hasAtLeastFive (s.board.place m s.turn) p at hfive
       simpa [hturn] using hfive
+-- 对合法当前落子证明：快速五连判定为真，当且仅当落子后终局结果是 `p` 获胜。
 
 def immediateWinningMovesFirst (s : Position) (p : Player) : Array Coord :=
   let moves := orderedCandidateMoves s p
   let winning := moves.filter (createsFiveFast s.board p)
   let other := moves.filter (fun m => !(createsFiveFast s.board p m))
   winning ++ other
+-- 将立即获胜步移到候选数组前部，同时保留其余候选及各组内部原有顺序。
 
 theorem mem_immediateWinningMovesFirst_iff (s : Position) (p : Player) (c : Coord) :
     c ∈ immediateWinningMovesFirst s p ↔ c ∈ orderedCandidateMoves s p := by
   simp only [immediateWinningMovesFirst, Array.mem_append, Array.mem_filter]
   cases h : createsFiveFast s.board p c <;> simp [h]
+-- 证明“立即胜着优先”只重排候选，不增加或删除任何落子。
 
 /- Compute the opponent's winning cells once per position.  The original
    `WinningCells` is a Finset predicate and is convenient for proofs, but
@@ -313,11 +349,13 @@ def winningCellsArray (s : Position) (p : Player) : Array Coord :=
   allCoords.filter (fun c =>
     decide (s.board.cell c = .empty ∧
       hasAtLeastFive (s.board.place c p) p))
+-- 枚举玩家 `p` 落下后能形成至少五连的所有空格。
 
 theorem mem_winningCellsArray_iff (s : Position) (p : Player) (c : Coord) :
     c ∈ winningCellsArray s p ↔
       c ∈ allCoords ∧ c ∈ WinningCells s p := by
   simp [winningCellsArray, mem_winningCells_iff]
+-- 证明数组成员关系等价于坐标属于形式化定义 `WinningCells s p`。
 
 /- A fixed-size threat mask keeps the one full-board scan of
    `winningCellsArray`, but replaces later linear membership searches with a
@@ -325,11 +363,13 @@ theorem mem_winningCellsArray_iff (s : Position) (p : Player) (c : Coord) :
 def winningCellsMask (s : Position) (p : Player) : Vector Bool 225 :=
   Vector.ofFn (fun i =>
     decide (coordAtIndex i ∈ WinningCells s p))
+-- 把全部制胜点预计算为 225 位布尔向量，以便按坐标常数时间查询。
 
 theorem winningCellsMask_get_iff (s : Position) (p : Player) (c : Coord) :
     (winningCellsMask s p).get (coordIndex c) = true ↔
       c ∈ WinningCells s p := by
   simp [winningCellsMask, coordAtIndex_coordIndex]
+-- 证明在制胜点掩码中读取坐标 `c`，结果为真当且仅当 `c` 属于 `WinningCells s p`。
 
 def tacticalCandidateMovesFast (s : Position) (p : Player) : Array Coord :=
   let moves := orderedCandidateMoves s p
@@ -342,6 +382,7 @@ def tacticalCandidateMovesFast (s : Position) (p : Player) : Array Coord :=
     !(createsFiveFast s.board p m) &&
       !(opponentWins.get (coordIndex m)))
   winning ++ defense ++ quiet
+-- 按“己方立即胜着、阻挡对方制胜点、普通步”的优先级排列全部候选。
 
 theorem mem_tacticalCandidateMovesFast_iff (s : Position) (p : Player) (c : Coord) :
     c ∈ tacticalCandidateMovesFast s p ↔ c ∈ orderedCandidateMoves s p := by
@@ -361,6 +402,7 @@ theorem mem_tacticalCandidateMovesFast_iff (s : Position) (p : Player) (c : Coor
             (winningCellsMask s (Player.other p)).get (coordIndex c) = true :=
           (winningCellsMask_get_iff s (Player.other p) c).mpr hdef
         simp [hwin, hdefM, hmove]
+-- 证明战术分组后的快速候选数组与排序前的数组具有相同成员集合。
       · have hdefM :
             (winningCellsMask s (Player.other p)).get (coordIndex c) = false := by
           cases hmask :
@@ -373,10 +415,12 @@ theorem mem_tacticalCandidateMovesFast_iff (s : Position) (p : Player) (c : Coor
 
 def tacticalCandidateMoves (s : Position) (p : Player) : Array Coord :=
   tacticalCandidateMovesFast s p
+-- 暴露稳定的战术候选接口，当前实现采用预计算制胜点掩码的快速版本。
 
 theorem mem_tacticalCandidateMoves_iff (s : Position) (p : Player) (c : Coord) :
     c ∈ tacticalCandidateMoves s p ↔ c ∈ orderedCandidateMoves s p := by
   simpa [tacticalCandidateMoves] using mem_tacticalCandidateMovesFast_iff s p c
+-- 证明公开战术候选接口仍只改变顺序，不改变合法候选集合。
 
 /- Reference implementation for regression comparisons.  It deliberately uses
    the full terminal predicate at each candidate. -/
@@ -388,6 +432,7 @@ def firstWinningMoveReference (s : Position) (p : Player) : Option Coord :=
       | none =>
           if terminal (play s m) = some (winner p) then some m else none)
     none
+-- 参考实现逐个计算完整终局谓词，返回候选顺序中的第一个立即获胜步。
 
 /- The production scan uses the local five-window predicate.  Its accepted
    candidates are still checked by the certificate layer before any theorem
@@ -400,6 +445,7 @@ def firstWinningMove (s : Position) (p : Player) : Option Coord :=
       | none =>
           if createsFiveFast s.board p m then some m else none)
     none
+-- 生产实现使用局部快速五连检查，返回候选顺序中的第一个立即获胜步。
 
 theorem immediateWinningMovesFirst_mem_legal
     {s : Position} {p : Player} {m : Coord}
@@ -409,6 +455,7 @@ theorem immediateWinningMovesFirst_mem_legal
   have hcandidate := (mem_orderedCandidateMoves_iff s p m).mp hordered
   have hlegal := (mem_candidateMovesFast_iff s p m).mp hcandidate
   exact ⟨hlegal.1, hlegal.2.2⟩
+-- 从立即胜着优先数组的成员关系恢复轮次条件与该落子的合法性。
 
 theorem createsFiveFast_terminal_of_immediateCandidate
     {s : Position} {p : Player} {m : Coord}
@@ -417,12 +464,15 @@ theorem createsFiveFast_terminal_of_immediateCandidate
     terminal (play s m) = some (winner p) := by
   have hlegal := immediateWinningMovesFirst_mem_legal hmem
   exact createsFiveFast_terminal hlegal.1 hlegal.2 hfast
+-- 证明候选数组中通过快速五连检查的落子，执行后必得到目标玩家获胜的终局。
 
 def SearchResult (cfg : SearchConfig) (search : Searcher) : Prop :=
   ∃ c, search cfg = some c ∧ c.target = cfg.target
+-- 描述搜索器返回了一张目标玩家与配置一致的证书，但尚未要求证书通过检查。
 
 def CheckedSearchResult (cfg : SearchConfig) (search : Searcher) : Prop :=
   ∃ c, search cfg = some c ∧ checkCertificate c = true
+-- 描述搜索器返回的证书已经通过全局可信检查器。
 
 /- A small executable certificate constructor for the easiest local case.
    It is intentionally not a global searcher: callers still have to supply a
@@ -435,12 +485,14 @@ def immediateWinCertificate (s : Position) (p : Player) (m : Coord) : CompactCer
       .proverMove s m 1,
       .terminal (play s m) (winner p)
     ] }
+-- 构造只有“证明方落一步”和“该子局面获胜终结”两个节点的最小紧凑证书。
 
 def immediateCertificateFor (s : Position) (p : Player) :
     Option CompactCertificate :=
   match firstWinningMove s p with
   | some m => some (immediateWinCertificate s p m)
   | none => none
+-- 若能找到立即获胜步，就为它生成两节点证书；否则报告没有此类证书。
 
 /- A two-ply constructor for a finite response table.  The root is an
    opponent-to-move position; each pair `(r, w)` records an opponent reply
@@ -456,6 +508,7 @@ def responseNodes (s : Position) (p : Player) : Nat → List (Coord × Coord) �
       .proverMove (play s reply) win (base + 2) ::
         .terminal (play (play s reply) win) (winner p) ::
         responseNodes s p (base + 2) rest
+-- 把每个“对手应手—我方胜着”对展开为连续的证明方节点与终局节点，并递推计算索引。
 
 def twoPlyImmediateCertificate (s : Position) (p : Player)
     (responses : Array (Coord × Coord)) : CompactCertificate :=
@@ -465,12 +518,14 @@ def twoPlyImmediateCertificate (s : Position) (p : Player)
       (.opponentMoves s
           (responses.mapIdx (fun i x => (x.1, 2 * i + 1))) ::
         responseNodes s p 0 responses.toList).toArray }
+-- 将完整应手表编码为两层证书：根列举对方所有合法应手，每条分支以我方立即获胜结束。
 
 theorem twoPlyImmediateCertificate_root_valid (s : Position) (p : Player)
     (responses : Array (Coord × Coord)) :
     (twoPlyImmediateCertificate s p responses).root <
       (twoPlyImmediateCertificate s p responses).nodes.size := by
   simp [twoPlyImmediateCertificate]
+-- 证明两层证书的根索引 0 始终落在非空节点数组内。
 
 theorem twoPlyImmediateCertificate_sound
     {s : Position} {p : Player} {responses : Array (Coord × Coord)}
@@ -481,6 +536,7 @@ theorem twoPlyImmediateCertificate_sound
     (twoPlyImmediateCertificate s p responses) hroot h
   change CanForceWin s p at hlocal
   exact hlocal
+-- 证明两层生成证书一旦通过局部检查，就可推出玩家 `p` 从局面 `s` 能强制获胜。
 
 def collectImmediateResponses (s : Position) (p : Player) :
     List Coord → Option (List (Coord × Coord))
@@ -490,6 +546,7 @@ def collectImmediateResponses (s : Position) (p : Player) :
           collectImmediateResponses s p rest with
       | some win, some responses => some ((reply, win) :: responses)
       | _, _ => none
+-- 递归检查给定的每个对手应手；只有每个子局面都存在我方立即胜着时才返回完整对应表。
 
 /- Enumerate every legal opponent reply and keep the result only when the
    target player has an immediate win after every one of them. -/
@@ -499,18 +556,21 @@ def immediateResponseTable (s : Position) (p : Player) :
       (candidateMovesFast s (Player.other p)).toList with
   | some responses => some responses.toArray
   | none => none
+-- 枚举对手的全部合法应手，并尝试为每个应手收集玩家 `p` 的立即获胜回复。
 
 def twoPlyCertificateFor (s : Position) (p : Player) :
     Option CompactCertificate :=
   match immediateResponseTable s p with
   | some responses => some (twoPlyImmediateCertificate s p responses)
   | none => none
+-- 若完整两层应手表存在，则将它转换为候选紧凑证书。
 
 def checkedTwoPlyCertificateFor (s : Position) (p : Player) :
     Option CompactCertificate :=
   match twoPlyCertificateFor s p with
   | some c => if checkLocalCertificate c then some c else none
   | none => none
+-- 只返回通过局部可信检查器的两层证书，拒绝生成器产生的无效候选。
 
 theorem checkedTwoPlyCertificateFor_sound
     {s : Position} {p : Player} {c : CompactCertificate}
@@ -533,11 +593,13 @@ theorem checkedTwoPlyCertificateFor_sound
       · simp at hgenerated
     · simp at h
   · simp at h
+-- 证明成功返回的已检查两层证书蕴含 `CanForceWin s p`。
 
 inductive CandidateTree where
   | terminal (position : Position)
   | proverMove (position : Position) (move : Coord) (child : CandidateTree)
   | opponentMoves (position : Position) (children : List (Coord × CandidateTree))
+-- 表示搜索器构造的未受信证明树：胜利叶、我方选一步、以及对方全部应手分支。
 
 /- Search results depend on both the position and the remaining depth.  The
    target player is included as well, so a table entry can never be reused for
@@ -547,36 +609,45 @@ structure SearchKey where
   target : Player
   position : PositionKey
   deriving DecidableEq, Repr
+-- 用剩余深度、目标玩家和完整局面共同标识一次有限深度搜索查询。
 
 structure SearchMemoEntry where
   key : SearchKey
   result : Option CandidateTree
+-- 保存某搜索键的成功候选树或已确认的失败结果。
 
 abbrev SearchMemo := Array SearchMemoEntry
+-- 用条目数组表示搜索记忆表，后插入的条目置于数组前端。
 
 def searchKey (fuel : Nat) (s : Position) (target : Player) : SearchKey :=
   { fuel := fuel, target := target, position := positionKey s }
+-- 从搜索参数构造精确的记忆化查询键。
 
 def memoLookup (memo : SearchMemo) (key : SearchKey) : Option (Option CandidateTree) :=
   (memo.toList.find? (fun entry => decide (entry.key = key))).map SearchMemoEntry.result
+-- 在线性记忆表中查找首个匹配键，并区分“未缓存”和“缓存的失败 `none`”。
 
 def memoInsert (entry : SearchMemoEntry) (memo : SearchMemo) : SearchMemo :=
   #[entry] ++ memo
+-- 把新搜索结果插入记忆表前端，使最新条目优先命中。
 
 theorem memoLookup_insert_same (entry : SearchMemoEntry) (memo : SearchMemo) :
     memoLookup (memoInsert entry memo) entry.key = some entry.result := by
   simp [memoLookup, memoInsert]
+-- 证明刚插入的条目按自身键查询时必然立即命中其结果。
 
 theorem memoLookup_insert_other_of_ne (entry : SearchMemoEntry) (memo : SearchMemo)
     {key : SearchKey} (hkey : entry.key ≠ key) :
     memoLookup (memoInsert entry memo) key = memoLookup memo key := by
   simp [memoLookup, memoInsert, hkey]
+-- 证明插入不同键的条目不会改变原键的查询结果。
 
 partial def CandidateTree.nodeCount : CandidateTree → Nat
   | .terminal _ => 1
   | .proverMove _ _ child => 1 + child.nodeCount
   | .opponentMoves _ children =>
       1 + children.foldl (fun total x => total + x.2.nodeCount) 0
+-- 递归统计候选树包含的节点总数，用于把树展平时计算后续子树根索引。
 
 mutual
   partial def candidateNodeListAt (target : Player) (base : Nat) :
@@ -588,12 +659,14 @@ mutual
     | .opponentMoves s children =>
         .opponentMoves s (candidateForestRefs (base + 1) children).toArray ::
           candidateForestNodes target (base + 1) children
+  -- 从索引 `base` 开始把一棵候选树以前序方式展平为紧凑证书节点列表。
 
   partial def candidateForestRefs (base : Nat) :
       List (Coord × CandidateTree) → List (Coord × Nat)
     | [] => []
     | (m, child) :: rest =>
         (m, base) :: candidateForestRefs (base + child.nodeCount) rest
+  -- 为对手分支森林计算每个落子对应的展平子树根索引。
 
   partial def candidateForestNodes (target : Player) (base : Nat) :
       List (Coord × CandidateTree) → List CertificateNode
@@ -601,6 +674,7 @@ mutual
     | (_, child) :: rest =>
         candidateNodeListAt target base child ++
           candidateForestNodes target (base + child.nodeCount) rest
+  -- 按顺序展平分支森林，并利用各子树节点数推进下一棵子树的起始索引。
 end
 
 def candidateTreeCertificate (target : Player) (tree : CandidateTree) :
@@ -608,6 +682,7 @@ def candidateTreeCertificate (target : Player) (tree : CandidateTree) :
   { target := target
     root := 0
     nodes := (candidateNodeListAt target 0 tree).toArray }
+-- 把未受信候选树封装成根索引为 0 的紧凑证书，供可信检查器重新验证。
 
 /- A stateful search result.  The recursive search returns the candidate tree
    together with every memo entry learned while exploring that tree.  The
@@ -616,9 +691,11 @@ def candidateTreeCertificate (target : Player) (tree : CandidateTree) :
 structure MemoSearchResult where
   tree : Option CandidateTree
   memo : SearchMemo
+-- 同时返回本次搜索得到的可选候选树和递归过程中积累的记忆表。
 
 instance : Nonempty MemoSearchResult :=
   ⟨{ tree := none, memo := #[] }⟩
+-- 给记忆化搜索结果提供一个“无候选树、空缓存”的默认非空见证。
 
 mutual
   partial def searchCandidateTreeMemoized (memo : SearchMemo) (fuel : Nat)
@@ -633,6 +710,7 @@ mutual
         { tree := computed.tree
           memo := memoInsert
             { key := key, result := computed.tree } computed.memo }
+  -- 记忆化搜索入口：命中时复用结果，未命中时递归计算并把根查询结果写回缓存。
 
   partial def searchCandidateTreeMemoMiss (memo : SearchMemo) (fuel : Nat)
       (s : Position) (target : Player) : MemoSearchResult :=
@@ -659,6 +737,7 @@ mutual
                     memo := forest.2 }
               | none =>
                   { tree := none, memo := forest.2 }
+  -- 处理缓存未命中的搜索节点：胜利终局生成叶，深度耗尽失败，否则按轮次采用存在或全称分支。
 
   partial def searchProverChildrenMemoized (memo : SearchMemo) (depth : Nat)
       (s : Position) (target : Player) : List Coord → MemoSearchResult
@@ -672,6 +751,7 @@ mutual
               memo := child.memo }
         | none =>
             searchProverChildrenMemoized child.memo depth s target rest
+  -- 搜索证明方分支；只需找到一个能递归获胜的落子，并保留探索中更新的缓存。
 
   partial def searchOpponentChildrenMemoized (memo : SearchMemo) (depth : Nat)
       (s : Position) (target : Player) : List Coord →
@@ -686,6 +766,7 @@ mutual
             match remaining.1 with
             | some children => ((some ((m, subtree) :: children)), remaining.2)
             | none => (none, remaining.2)
+  -- 搜索对手分支；必须为每个合法应手找到获胜子树，否则整个全称分支失败。
 end
 
 /- The historical entry point starts with an empty memo.  Keeping this
@@ -695,6 +776,7 @@ end
 def searchCandidateTree (fuel : Nat) (s : Position)
     (target : Player) : Option CandidateTree :=
   (searchCandidateTreeMemoized #[] fuel s target).tree
+-- 从空记忆表启动有限深度候选树搜索，并仅暴露候选树结果。
 
 /- Cache adapter for the finite-depth search.  A hit reuses the stored tree;
    a miss now runs the stateful recursive search, so entries discovered below
@@ -706,6 +788,7 @@ def searchCandidateTreeCached (memo : SearchMemo) (fuel : Nat)
   match memoLookup memo (searchKey fuel s target) with
   | some result => result
   | none => (searchCandidateTreeMemoized memo fuel s target).tree
+-- 使用调用者提供的缓存查询搜索结果；根未命中时运行完整记忆化递归。
 
 theorem searchCandidateTreeCached_hit
     {memo : SearchMemo} {fuel : Nat} {s : Position} {target : Player}
@@ -713,6 +796,7 @@ theorem searchCandidateTreeCached_hit
     (h : memoLookup memo (searchKey fuel s target) = some result) :
     searchCandidateTreeCached memo fuel s target = result := by
   simp [searchCandidateTreeCached, h]
+-- 证明根查询命中时，缓存适配器原样返回已存结果。
 
 theorem searchCandidateTreeCached_miss
     {memo : SearchMemo} {fuel : Nat} {s : Position} {target : Player}
@@ -720,10 +804,12 @@ theorem searchCandidateTreeCached_miss
     searchCandidateTreeCached memo fuel s target =
       (searchCandidateTreeMemoized memo fuel s target).tree := by
   simp [searchCandidateTreeCached, h]
+-- 证明根查询未命中时，缓存适配器等于记忆化递归计算出的树结果。
 
 def depthCertificateFor (fuel : Nat) (s : Position) (target : Player) :
     Option CompactCertificate :=
   (searchCandidateTree fuel s target).map (candidateTreeCertificate target)
+-- 把有限深度搜索成功得到的候选树展平为尚未检查的紧凑证书。
 
 def checkedDepthCertificateForCached (memo : SearchMemo) (fuel : Nat)
     (s : Position) (target : Player) : Option CompactCertificate :=
@@ -732,6 +818,7 @@ def checkedDepthCertificateForCached (memo : SearchMemo) (fuel : Nat)
       let c := candidateTreeCertificate target tree
       if checkLocalCertificateAt s c then some c else none
   | none => none
+-- 对缓存搜索产生的证书执行以 `s` 为根的局部检查，只返回通过检查的结果。
 
 theorem checkedDepthCertificateForCached_sound
     {memo : SearchMemo} {fuel : Nat} {s : Position} {p : Player}
@@ -752,6 +839,7 @@ theorem checkedDepthCertificateForCached_sound
         (candidateTreeCertificate p tree) hchecked
     · simp at h
   · simp at h
+-- 证明缓存版深度搜索成功返回证书时，目标玩家从根局面确实能强制获胜。
 
 def checkedDepthCertificateFor (fuel : Nat) (s : Position) (target : Player) :
     Option CompactCertificate :=
@@ -760,6 +848,7 @@ def checkedDepthCertificateFor (fuel : Nat) (s : Position) (target : Player) :
       let c := candidateTreeCertificate target tree
       if checkLocalCertificateAt s c then some c else none
   | none => none
+-- 运行无外部缓存的有限深度搜索，并仅保留通过局部检查的证书。
 
 theorem checkedDepthCertificateFor_sound
     {fuel : Nat} {s : Position} {p : Player} {c : CompactCertificate}
@@ -780,6 +869,7 @@ theorem checkedDepthCertificateFor_sound
       simpa [candidateTreeCertificate] using hsound
     · simp at h
   · simp at h
+-- 证明普通深度搜索一旦返回已检查证书，就可推出 `CanForceWin s p`。
 
 def immediateCertificateNodesChecked (s : Position) (p : Player) : Bool :=
   match firstWinningMove s p with
@@ -789,6 +879,7 @@ def immediateCertificateNodesChecked (s : Position) (p : Player) : Bool :=
         checkNodeAt p c.nodes 1
           (.terminal (play s m) (winner p))
   | none => false
+-- 单独检查立即胜证书的两个节点，作为不依赖全局初始根的局部可执行判据。
 
 /- This is the trusted local bridge for the executable primitive above.  It
    extracts the turn, legality, and terminal-win facts from the two checked
@@ -812,6 +903,7 @@ theorem immediateCertificateNodesChecked_sound
         (play s m) (winner p)).mp h.2
     exact canForceWin_immediate hprover.2.2.1 hterminal.1 hprover.2.1
   · simp at h
+-- 从两个节点的检查结果提取合法性、轮次与获胜终局，推出局部强制获胜。
 
 theorem immediateWinCertificate_prover_checked
     {s : Position} {p : Player} {m : Coord}
@@ -823,6 +915,7 @@ theorem immediateWinCertificate_prover_checked
   simp [immediateWinCertificate, checkNodeAt, checkNode, checkEdgesAt,
     refAfter, refValid, hterm, hturn, hlegal, childPositionMatches,
     nodePosition, samePosition_self]
+-- 证明合法且轮到 `p` 的落子会使立即胜证书的根“证明方落子”节点通过检查。
 
 theorem immediateWinCertificate_terminal_checked
     {s : Position} {p : Player} {m : Coord}
@@ -830,6 +923,7 @@ theorem immediateWinCertificate_terminal_checked
     checkNodeAt p (immediateWinCertificate s p m).nodes 1
       (.terminal (play s m) (winner p)) = true := by
   simp [immediateWinCertificate, checkNodeAt, checkNode, checkEdgesAt, hwin]
+-- 证明落子后确实为目标玩家获胜时，立即胜证书的终局节点通过检查。
 
 theorem immediateWinCertificate_reifies
     {s : Position} {p : Player} {m : Coord}
@@ -849,6 +943,7 @@ theorem immediateWinCertificate_reifies
     · subst i
       simpa [immediateWinCertificate] using
         immediateWinCertificate_terminal_checked hwin
+-- 把两个已验证节点重构为依赖类型的 `CertificateTree p s` 见证。
 
 theorem immediateWinCertificate_sound
     {s : Position} {p : Player} {m : Coord}
@@ -857,66 +952,83 @@ theorem immediateWinCertificate_sound
     CanForceWin s p :=
   CertificateTree.sound
     (Classical.choice (immediateWinCertificate_reifies hturn hlegal hwin))
+-- 由重构后的证书树可靠性证明，立即获胜证书蕴含 `CanForceWin s p`。
 
 theorem checkedSearchResult_sound {cfg : SearchConfig} {search : Searcher}
     (h : CheckedSearchResult cfg search) :
     CanForceWin initialPosition .black := by
   rcases h with ⟨c, _hresult, hcheck⟩
   exact compact_certificate_sound c hcheck
+-- 证明任何搜索算法只要返回通过全局检查的证书，就能证明初始局面黑方强制获胜。
 
 def acceptCertificate (c : CompactCertificate) : Option CompactCertificate :=
   if checkCertificate c then some c else none
+-- 将全局证书检查器包装为过滤器：有效证书原样接收，无效证书返回 `none`。
 
 theorem acceptCertificate_some_iff (c : CompactCertificate) :
     acceptCertificate c = some c ↔ checkCertificate c = true := by
   simp [acceptCertificate]
+-- 刻画证书被接收的充要条件正是全局检查结果为真。
 
 theorem acceptCertificate_sound {c : CompactCertificate}
     (h : acceptCertificate c = some c) :
     CanForceWin initialPosition .black := by
   exact compact_certificate_sound c ((acceptCertificate_some_iff c).mp h)
+-- 证明任何被 `acceptCertificate` 接收的证书都给出初始局面黑方强制获胜定理。
 
 /- Executable regression checks for the untrusted candidate generator.  These
    examples check coverage and filtering only; they do not contribute to the
    certificate soundness theorem. -/
 example : allCoords.size = 225 := by
   native_decide
+-- 回归检查：全坐标数组恰好包含 225 个元素。
 
 example : allCoords[0]? = some ((0, 0) : Coord) := by
   native_decide
+-- 回归检查：行优先数组的首元素是左上角坐标 `(0, 0)`。
 
 example : allCoords[112]? = some ((7, 7) : Coord) := by
   native_decide
+-- 回归检查：行优先数组的中心索引 112 对应坐标 `(7, 7)`。
 
 example : allCoords[224]? = some ((14, 14) : Coord) := by
   native_decide
+-- 回归检查：行优先数组的末元素是右下角坐标 `(14, 14)`。
 
 example : coordIndex ((0, 0) : Coord) = 0 := by
   native_decide
+-- 回归检查：左上角的行优先索引为 0。
 
 example : coordIndex ((7, 7) : Coord) = 112 := by
   native_decide
+-- 回归检查：中心点的行优先索引为 112。
 
 example : coordIndex ((14, 14) : Coord) = 224 := by
   native_decide
+-- 回归检查：右下角的行优先索引为 224。
 
 example (c : Coord) : coordAtIndex (coordIndex c) = c := by
   exact coordAtIndex_coordIndex c
+-- 对任意坐标复用逆映射定理，检查编码再解码保持坐标不变。
 
 example : boardKey Board.empty = boardKey Board.empty := by
   rfl
+-- 最小自反测试：空棋盘的完整键与自身相等。
 
 example : positionKey initialPosition = positionKey initialPosition := by
   rfl
+-- 最小自反测试：初始局面的完整键与自身相等。
 
 example :
     containsPositionKey #[positionKey initialPosition] initialPosition = true := by
   native_decide
+-- 回归检查：只含初始局面键的换位表能够命中初始局面。
 
 example :
     containsPositionKey #[positionKey initialPosition]
       (play initialPosition (7, 7)) = false := by
   native_decide
+-- 回归检查：初始局面键不会误命中已经在中心落子后的局面。
 
 example : positionKey initialPosition ≠ positionKey (play initialPosition (7, 7)) := by
   intro h
@@ -924,52 +1036,65 @@ example : positionKey initialPosition ≠ positionKey (play initialPosition (7, 
   have hne : (Player.black : Player) ≠ Player.white := by decide
   apply hne
   simpa [positionKey, initialPosition, Position.initial, play, Position.play] using hturn
+-- 证明初始局面与首步后的局面具有不同的无损位置键。
 
 example (s : Position) (p : Player) (c : Coord) :
     (winningCellsMask s p).get (coordIndex c) = true ↔
       c ∈ WinningCells s p := by
   exact winningCellsMask_get_iff s p c
+-- 回归检查：制胜点掩码的读取规范可直接用于任意局面、玩家与坐标。
 
 example : (candidateMoves initialPosition .black).size = 225 := by
   native_decide
+-- 回归检查：初始局面轮到黑方，参考生成器列出全部 225 个落子。
 
 example : (candidateMovesFast initialPosition .black).size = 225 := by
   native_decide
+-- 回归检查：快速生成器在初始局面同样列出 225 个落子。
 
 example : ((7, 7) : Coord) ∈ candidateMoves initialPosition .black := by
   native_decide
+-- 回归检查：初始局面的中心点属于黑方候选集合。
 
 example : (candidateMoves initialPosition .white).size = 0 := by
   native_decide
+-- 回归检查：初始局面尚未轮到白方，参考生成器返回空数组。
 
 example : (candidateMovesFast initialPosition .white).size = 0 := by
   native_decide
+-- 回归检查：快速生成器也会拒绝非当前玩家的候选查询。
 
 example :
     (candidateMoves (play initialPosition (7, 7)) .white).size = 224 := by
   native_decide
+-- 回归检查：黑方首步后，参考生成器为白方列出剩余 224 个空点。
 
 example :
     (candidateMovesFast (play initialPosition (7, 7)) .white).size = 224 := by
   native_decide
+-- 回归检查：黑方首步后，快速生成器与参考实现具有相同候选数。
 
 example :
     (orderedCandidateMoves (play initialPosition (7, 7)) .white).size = 224 := by
   native_decide
+-- 回归检查：邻近优先排序不改变首步后候选数组的大小。
 
 example :
     (orderedCandidateMoves (play initialPosition (7, 7)) .white)[0]? =
       some ((6, 6) : Coord) := by
   native_decide
+-- 回归检查：中心有棋子时，排序会把相邻的 `(6, 6)` 放到首位。
 
 example :
     ((0, 0) : Coord) ∈
       orderedCandidateMoves (play initialPosition (7, 7)) .white := by
   native_decide
+-- 回归检查：即使远离已有棋子，角点仍保留在排序后的完整候选集中。
 
 example :
     ((7, 7) : Coord) ∉ candidateMoves (play initialPosition (7, 7)) .white := by
   native_decide
+-- 回归检查：已经被黑棋占据的中心点不会成为白方合法候选。
 
 def searchTerminalBoard : Board :=
   Board.place
@@ -980,12 +1105,15 @@ def searchTerminalBoard : Board :=
         (7, 7) .black)
       (8, 7) .black)
     (9, 7) .black
+-- 构造含有一条黑方纵向五连的测试棋盘。
 
 def searchTerminalPosition : Position :=
   ⟨searchTerminalBoard, .white⟩
+-- 将五连测试棋盘包装为轮到白方、但实际上已经终局的测试局面。
 
 example : (candidateMoves searchTerminalPosition .white).size = 0 := by
   native_decide
+-- 回归检查：即使轮到指定玩家，终局位置也不再产生候选落子。
 
 def searchImmediateBoard : Board :=
   Board.place
@@ -994,17 +1122,21 @@ def searchImmediateBoard : Board :=
         (Board.place Board.empty (5, 7) .black) (6, 7) .black)
       (7, 7) .black)
     (8, 7) .black
+-- 构造已有连续四颗黑棋、两端可补成五连的立即获胜测试棋盘。
 
 def searchImmediatePosition : Position :=
   ⟨searchImmediateBoard, .black⟩
+-- 将连续四子测试棋盘包装为轮到黑方的局面。
 
 example : (firstWinningMove searchImmediatePosition .black).isSome := by
   native_decide
+-- 回归检查：快速扫描能在连续四子局面找到至少一个立即获胜步。
 
 example :
     firstWinningMoveReference searchImmediatePosition .black =
       firstWinningMove searchImmediatePosition .black := by
   native_decide
+-- 回归检查：在该测试局面中，完整终局参考扫描与快速扫描返回相同首个胜着。
 
 example :
     terminal (play searchImmediatePosition (4, 7)) = some .blackWin := by
@@ -1012,25 +1144,31 @@ example :
     (s := searchImmediatePosition) (p := .black) (m := (4, 7))
   · native_decide
   · native_decide
+-- 通过快速检测的可靠性桥证明在 `(4, 7)` 落子后终局结果为黑胜。
 
 example :
     (immediateWinningMovesFirst searchImmediatePosition .black)[0]? =
       some ((4, 7) : Coord) := by
   native_decide
+-- 回归检查：立即获胜排序把 `(4, 7)` 放在候选数组首位。
 
 example :
     (immediateWinningMovesFirst searchImmediatePosition .black).size = 221 := by
   native_decide
+-- 回归检查：四个已占据坐标被排除后，重排数组仍含全部 221 个合法空点。
 
 example : (immediateCertificateFor searchImmediatePosition .black).isSome := by
   native_decide
+-- 回归检查：立即胜着存在时能够生成对应的两节点候选证书。
 
 example : immediateCertificateNodesChecked searchImmediatePosition .black = true := by
   native_decide
+-- 回归检查：生成的立即胜证书两个节点都通过可信局部检查。
 
 example : CanForceWin searchImmediatePosition .black := by
   apply immediateCertificateNodesChecked_sound
   native_decide
+-- 由节点检查可靠性正式证明黑方从该测试局面能够强制获胜。
 
 /- Fast five detection regression suite.  Each board has four stones and the
    tested move fills the fifth point; the boundary case exercises a window
@@ -1042,6 +1180,7 @@ def fastVerticalBoard : Board :=
         (Board.place Board.empty (7, 3) .black) (7, 4) .black)
       (7, 5) .black)
     (7, 6) .black
+-- 构造缺少第五子的纵向连续四子测试棋盘。
 
 def fastDiagonalUpBoard : Board :=
   Board.place
@@ -1050,6 +1189,7 @@ def fastDiagonalUpBoard : Board :=
         (Board.place Board.empty (3, 3) .black) (4, 4) .black)
       (5, 5) .black)
     (6, 6) .black
+-- 构造缺少第五子的上升对角线连续四子测试棋盘。
 
 def fastDiagonalDownBoard : Board :=
   Board.place
@@ -1058,6 +1198,7 @@ def fastDiagonalDownBoard : Board :=
         (Board.place Board.empty (3, 6) .black) (4, 5) .black)
       (5, 4) .black)
     (6, 3) .black
+-- 构造缺少第五子的下降对角线连续四子测试棋盘。
 
 def fastBoundaryBoard : Board :=
   Board.place
@@ -1066,38 +1207,48 @@ def fastBoundaryBoard : Board :=
         (Board.place Board.empty (0, 0) .black) (1, 0) .black)
       (2, 0) .black)
     (3, 0) .black
+-- 构造贴近棋盘边界、缺少第五子的横向连续四子测试棋盘。
 
 def fastInsufficientBoard : Board :=
   Board.place
     (Board.place
       (Board.place Board.empty (5, 7) .black) (6, 7) .black)
     (7, 7) .black
+-- 构造只有三颗连续黑棋、无法一步组成五连的反例棋盘。
 
 example : createsFiveFast searchImmediateBoard .black (4, 7) = true := by
   native_decide
+-- 回归检查：快速检测能识别补齐横向五连的落子。
 
 example : createsFiveFast fastVerticalBoard .black (7, 7) = true := by
   native_decide
+-- 回归检查：快速检测能识别补齐纵向五连的落子。
 
 example : createsFiveFast fastDiagonalUpBoard .black (7, 7) = true := by
   native_decide
+-- 回归检查：快速检测能识别补齐上升对角线五连的落子。
 
 example : createsFiveFast fastDiagonalDownBoard .black (7, 2) = true := by
   native_decide
+-- 回归检查：快速检测能识别补齐下降对角线五连的落子。
 
 example : createsFiveFast fastBoundaryBoard .black (4, 0) = true := by
   native_decide
+-- 回归检查：快速检测能正确处理从棋盘边界开始的五连窗口。
 
 example : createsFiveFast fastInsufficientBoard .black (8, 7) = false := by
   native_decide
+-- 回归检查：仅把三连扩为四连不会被误判为五连。
 
 example : ¬ hasAtLeastFive fastInsufficientBoard .black := by
   native_decide
+-- 回归检查：三子反例棋盘本身确实不存在黑方至少五连。
 
 example :
     createsFiveFast searchImmediateBoard .black (4, 7) = true ↔
       hasAtLeastFive (searchImmediateBoard.place (4, 7) .black) .black := by
   exact createsFiveFast_iff (by native_decide)
+-- 在具体测试棋盘上实例化快速五连判定与形式化五连谓词的等价定理。
 
 example :
     createsFiveFast searchImmediateBoard .black (4, 7) = true ↔
@@ -1106,5 +1257,6 @@ example :
     (s := ⟨searchImmediateBoard, .black⟩) (p := .black) (m := (4, 7))
   · rfl
   · native_decide
+-- 在合法测试局面上实例化快速五连判定与落子后黑胜终局的等价定理。
 
 end Gomoku
