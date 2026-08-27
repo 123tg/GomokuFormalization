@@ -6,8 +6,10 @@ small reference search in `Gomoku.Search` with:
 
 * a hard node budget;
 * an explicit distinction between an exhausted search and a budget cutoff;
-* tactical move ordering without deleting any legal move;
-* a transposition table carried through the recursive search;
+* tactical move ordering and target-side forced-move pruning;
+* an optional target-side selective width limit;
+* immediate-win terminal short-circuits;
+* a size-bounded transposition table carried through the recursive search;
 * iterative deepening and observable search statistics.
 
 The engine never turns its own result directly into a theorem.  A candidate
@@ -21,8 +23,15 @@ structure EngineConfig where
   maxDepth : Nat := 4
   /-- `0` means that the search has no node limit. -/
   maxNodes : Nat := 50000
+  /-- `0` keeps every completed transposition-table entry. -/
+  maxMemoEntries : Nat := 200000
+  /-- Initial allocation only; `maxMemoEntries` is the hard size bound. -/
   memoCapacity : Nat := 4096
+  /-- `0` tries every target-player move; a positive value is a selective
+      width bound after forced tactical moves have been identified. -/
+  maxProverMoves : Nat := 0
   useThreatOrdering : Bool := true
+  useForcedMovePruning : Bool := true
   deriving DecidableEq, Repr
 
 inductive EngineStatus where
@@ -36,6 +45,7 @@ structure EngineStats where
   nodes : Nat := 0
   cacheHits : Nat := 0
   memoEntries : Nat := 0
+  memoStoreSkips : Nat := 0
   deriving DecidableEq, Repr
 
 def enginePlayerHash : Player → UInt64
@@ -71,11 +81,13 @@ structure EngineState where
   memo : EngineMemo := emptyEngineMemo
   nodes : Nat := 0
   cacheHits : Nat := 0
+  memoStoreSkips : Nat := 0
 
 def EngineState.stats (state : EngineState) : EngineStats :=
   { nodes := state.nodes
     cacheHits := state.cacheHits
-    memoEntries := state.memo.size }
+    memoEntries := state.memo.size
+    memoStoreSkips := state.memoStoreSkips }
 
 def engineHasBudget (cfg : EngineConfig) (state : EngineState) : Bool :=
   decide (cfg.maxNodes = 0 ∨ state.nodes < cfg.maxNodes)
@@ -86,15 +98,26 @@ def engineRecordVisit (state : EngineState) : EngineState :=
 def engineRecordCacheHit (state : EngineState) : EngineState :=
   { state with cacheHits := state.cacheHits + 1 }
 
-def engineMemoInsert (key : SearchKey) (result : Option CandidateTree)
-    (state : EngineState) : EngineState :=
-  { state with memo := state.memo.insert key result }
+def engineMemoCanInsert (cfg : EngineConfig) (state : EngineState) : Bool :=
+  decide (cfg.maxMemoEntries = 0 ∨ state.memo.size < cfg.maxMemoEntries)
+
+def engineMemoInsert (cfg : EngineConfig) (key : SearchKey)
+    (result : Option CandidateTree) (state : EngineState) : EngineState :=
+  if state.memo.contains key || engineMemoCanInsert cfg state then
+    { state with memo := state.memo.insert key result }
+  else
+    { state with memoStoreSkips := state.memoStoreSkips + 1 }
 
 /- The existing tactical ordering is intentionally proof-oriented and builds
    a full `WinningCells` mask.  The engine can use the cheaper local detector:
    for each empty point it inspects only the five-cell windows containing that
    point.  Winning moves come first, then blocks, then quiet moves. -/
-def engineTacticalCandidateMoves (s : Position) : Array Coord :=
+structure EngineMoveGroups where
+  winning : Array Coord
+  defense : Array Coord
+  quiet : Array Coord
+
+def engineMoveGroups (s : Position) : EngineMoveGroups :=
   let moves := orderedCandidateMoves s s.turn
   let winning := moves.filter (createsFiveFast s.board s.turn)
   let defense := moves.filter (fun m =>
@@ -103,13 +126,17 @@ def engineTacticalCandidateMoves (s : Position) : Array Coord :=
   let quiet := moves.filter (fun m =>
     !(createsFiveFast s.board s.turn m) &&
       !(createsFiveFast s.board (Player.other s.turn) m))
-  winning ++ defense ++ quiet
+  { winning := winning, defense := defense, quiet := quiet }
+
+def engineTacticalCandidateMoves (s : Position) : Array Coord :=
+  let groups := engineMoveGroups s
+  groups.winning ++ groups.defense ++ groups.quiet
 
 theorem mem_engineTacticalCandidateMoves_iff (s : Position) (c : Coord) :
     c ∈ engineTacticalCandidateMoves s ↔
       c ∈ orderedCandidateMoves s s.turn := by
-  simp only [engineTacticalCandidateMoves, Array.mem_append,
-    Array.mem_filter]
+  simp only [engineTacticalCandidateMoves, engineMoveGroups,
+    Array.mem_append, Array.mem_filter]
   cases hwin : createsFiveFast s.board s.turn c <;>
     cases hdef : createsFiveFast s.board (Player.other s.turn) c <;>
     simp_all
@@ -133,6 +160,29 @@ theorem mem_engineCandidateMoves_iff (cfg : EngineConfig) (s : Position)
   · simp only [engineCandidateMoves, if_neg h]
     rw [mem_immediateWinningMovesFirst_iff,
       mem_orderedCandidateMoves_iff]
+
+def engineLimitProverMoves (cfg : EngineConfig)
+    (moves : Array Coord) : Array Coord :=
+  if cfg.maxProverMoves = 0 then moves
+  else (moves.toList.take cfg.maxProverMoves).toArray
+
+/- Selective pruning is used only at target-player nodes.  Immediate wins are
+   sufficient by themselves.  If the opponent already has a one-move win and
+   the target has none, only cells that block such a win are searched.  At an
+   opponent node the engine still calls `engineCandidateMoves`, so certificate
+   coverage is never weakened. -/
+def engineProverCandidateMoves (cfg : EngineConfig)
+    (s : Position) : Array Coord :=
+  if cfg.useForcedMovePruning then
+    let groups := engineMoveGroups s
+    if !groups.winning.isEmpty then
+      engineLimitProverMoves cfg groups.winning
+    else if !groups.defense.isEmpty then
+      engineLimitProverMoves cfg groups.defense
+    else
+      engineLimitProverMoves cfg groups.quiet
+  else
+    engineLimitProverMoves cfg (engineCandidateMoves cfg s)
 
 inductive EngineOutcome where
   | found (tree : CandidateTree)
@@ -176,10 +226,10 @@ mutual
           match computed.outcome with
           | .found tree =>
               { outcome := .found tree
-                state := engineMemoInsert key (some tree) computed.state }
+                state := engineMemoInsert cfg key (some tree) computed.state }
           | .notFound =>
               { outcome := .notFound
-                state := engineMemoInsert key none computed.state }
+                state := engineMemoInsert cfg key none computed.state }
           | .cutoff => computed
         else
           { outcome := .cutoff, state := state }
@@ -199,7 +249,7 @@ mutual
         | depth + 1 =>
             if s.turn = target then
               searchEngineProver cfg state depth s target
-                (engineCandidateMoves cfg s).toList
+                (engineProverCandidateMoves cfg s).toList
             else
               let forest := searchEngineOpponent cfg state depth s target
                 (engineCandidateMoves cfg s).toList
@@ -218,14 +268,18 @@ mutual
     | [] =>
         { outcome := .notFound, state := state }
     | m :: rest =>
-        let child := searchWithEngine cfg state depth (play s m) target
-        match child.outcome with
-        | .found subtree =>
-            { outcome := .found (.proverMove s m subtree)
-              state := child.state }
-        | .notFound =>
-            searchEngineProver cfg child.state depth s target rest
-        | .cutoff => child
+        if createsFiveFast s.board s.turn m then
+          { outcome := .found (.proverMove s m (.terminal (play s m)))
+            state := state }
+        else
+          let child := searchWithEngine cfg state depth (play s m) target
+          match child.outcome with
+          | .found subtree =>
+              { outcome := .found (.proverMove s m subtree)
+                state := child.state }
+          | .notFound =>
+              searchEngineProver cfg child.state depth s target rest
+          | .cutoff => child
 
   partial def searchEngineOpponent (cfg : EngineConfig) (state : EngineState)
       (depth : Nat) (s : Position) (target : Player) :
@@ -233,22 +287,25 @@ mutual
     | [] =>
         { outcome := .found [], state := state }
     | m :: rest =>
-        let child := searchWithEngine cfg state depth (play s m) target
-        match child.outcome with
-        | .found subtree =>
-            let remaining := searchEngineOpponent cfg child.state depth s target rest
-            match remaining.outcome with
-            | .found children =>
-                { outcome := .found ((m, subtree) :: children)
-                  state := remaining.state }
-            | .notFound =>
-                { outcome := .notFound, state := remaining.state }
-            | .cutoff =>
-                { outcome := .cutoff, state := remaining.state }
-        | .notFound =>
-            { outcome := .notFound, state := child.state }
-        | .cutoff =>
-            { outcome := .cutoff, state := child.state }
+        if createsFiveFast s.board s.turn m then
+          { outcome := .notFound, state := state }
+        else
+          let child := searchWithEngine cfg state depth (play s m) target
+          match child.outcome with
+          | .found subtree =>
+              let remaining := searchEngineOpponent cfg child.state depth s target rest
+              match remaining.outcome with
+              | .found children =>
+                  { outcome := .found ((m, subtree) :: children)
+                    state := remaining.state }
+              | .notFound =>
+                  { outcome := .notFound, state := remaining.state }
+              | .cutoff =>
+                  { outcome := .cutoff, state := remaining.state }
+          | .notFound =>
+              { outcome := .notFound, state := child.state }
+          | .cutoff =>
+              { outcome := .cutoff, state := child.state }
 end
 
 structure EngineReport where
@@ -341,13 +398,27 @@ theorem runCheckedEngine_sound {cfg : EngineConfig} {s : Position}
 /- Small executable regressions.  They intentionally use a local tactical
    position; a complete 15x15 opening search is not part of a regular build. -/
 def engineSmokeConfig : EngineConfig :=
-  { maxDepth := 1, maxNodes := 3, useThreatOrdering := true }
+  { maxDepth := 1, maxNodes := 2, useThreatOrdering := true }
 
 def engineSmokeResult : CheckedEngineResult :=
   runCheckedEngine engineSmokeConfig searchImmediatePosition .black
 
 def engineCutoffConfig : EngineConfig :=
-  { maxDepth := 1, maxNodes := 2, useThreatOrdering := true }
+  { maxDepth := 1, maxNodes := 1, useThreatOrdering := true }
+
+def engineSelectiveConfig : EngineConfig :=
+  { maxDepth := 1, maxNodes := 2, maxProverMoves := 1
+    useThreatOrdering := true, useForcedMovePruning := true }
+
+def engineBoundedMemoConfig : EngineConfig :=
+  { maxDepth := 1, maxNodes := 2, maxMemoEntries := 1
+    useThreatOrdering := true }
+
+def engineBoundedMemoResult : EngineReport :=
+  runEngine engineBoundedMemoConfig searchImmediatePosition .black
+
+def engineDefensePosition : Position :=
+  ⟨searchImmediateBoard, .white⟩
 
 def engineCachedSmokeResult : EngineReport :=
   runEngineFrom engineSmokeConfig engineSmokeResult.report.state.memo
@@ -358,9 +429,23 @@ example :
     engineSmokeResult.report.status = .found ∧
     engineSmokeResult.report.depth = some 1 ∧
     engineSmokeResult.certificate.isSome ∧
-    engineSmokeResult.report.stats.nodes = 3 ∧
+    engineSmokeResult.report.stats.nodes = 2 ∧
     (runEngine engineCutoffConfig searchImmediatePosition .black).status =
       .nodeLimit ∧
+    (engineProverCandidateMoves engineSelectiveConfig
+      searchImmediatePosition).size = 1 ∧
+    (engineProverCandidateMoves engineSelectiveConfig
+      searchImmediatePosition)[0]? = some ((4, 7) : Coord) ∧
+    (engineProverCandidateMoves engineSmokeConfig
+      engineDefensePosition).size = 2 ∧
+    ((4, 7) : Coord) ∈
+      engineProverCandidateMoves engineSmokeConfig engineDefensePosition ∧
+    ((9, 7) : Coord) ∈
+      engineProverCandidateMoves engineSmokeConfig engineDefensePosition ∧
+    (engineCandidateMoves engineSmokeConfig engineDefensePosition).size = 221 ∧
+    engineBoundedMemoResult.status = .found ∧
+    engineBoundedMemoResult.stats.memoEntries = 1 ∧
+    engineBoundedMemoResult.stats.memoStoreSkips = 1 ∧
     engineCachedSmokeResult.status = .found ∧
     engineCachedSmokeResult.stats.nodes = 0 ∧
     engineCachedSmokeResult.stats.cacheHits = 2 := by
