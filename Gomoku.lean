@@ -6,5 +6,7 @@ import Gomoku.Tactics
 import Gomoku.Certificate
 import Gomoku.Search
 import Gomoku.Engine
+import Gomoku.Generated.CppSmoke
+import Gomoku.Generated.CppFork
 import Gomoku.Examples
 import Gomoku.Adversarial
