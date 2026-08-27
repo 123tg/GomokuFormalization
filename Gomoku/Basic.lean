@@ -1,5 +1,9 @@
 import Mathlib
 
+/-!
+基础数据层：定义玩家、棋盘格、15×15 坐标与函数式棋盘，并证明落子对棋子数和空格数的影响。
+-/
+
 namespace Gomoku
 
 inductive Player where

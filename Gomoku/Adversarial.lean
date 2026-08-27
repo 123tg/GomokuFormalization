@@ -166,13 +166,13 @@ theorem twoLayerCertificate_nodes_checked :
           (.proverMove twoLayerRoot twoLayerMove 1) = true := by
       native_decide
     simpa [twoLayerCertificate] using hcheck
--- 枚举唯二的合法节点索引，证明两节点证书中的每个节点都通过带边检查。
   · subst i
     have hcheck :
         checkNodeAt .black twoLayerCertificate.nodes 1
           (.terminal (play twoLayerRoot twoLayerMove) .blackWin) = true := by
       native_decide
     simpa [twoLayerCertificate] using hcheck
+-- 枚举唯二的合法节点索引，证明两节点证书中的每个节点都通过带边检查。
 
 example : Nonempty (CertificateTree .black twoLayerRoot) := by
   exact compact_reify_at twoLayerCertificate .black 0 (by native_decide)
@@ -255,8 +255,8 @@ example : CanForceWin opponentForkPosition .black := by
   · rfl
   · native_decide
   · native_decide
--- 用双威胁强制胜定理证明：无论白方占哪一端，黑方都可占另一端获胜。
   · native_decide
+-- 用双威胁强制胜定理证明：无论白方占哪一端，黑方都可占另一端获胜。
 
 /- A move-level witness: Black fills the centre of a cross-shaped gap.  The
    resulting position has horizontal and vertical four-lines, hence at least
@@ -306,9 +306,9 @@ example : CanForceWin createdDoubleThreatPosition .black := by
   · rfl
   · native_decide
   · native_decide
+  · native_decide
+  · native_decide
 -- 应用“落子制造安全双威胁”定理，证明黑方从交叉缺口根局面强制获胜。
-  · native_decide
-  · native_decide
 
 example :
     checkNodeAt .black opponentForkCertificate.nodes 0
@@ -355,7 +355,6 @@ theorem opponentForkCertificate_nodes_checked :
           (.opponentMoves opponentForkPosition #[((4, 7), 1), ((9, 7), 2)]) = true := by
       native_decide
     simpa [opponentForkCertificate] using hcheck
--- 穷举索引 0 至 4，证明手写分叉证书的全部节点均通过语义与有向边检查。
   · subst i
     have hcheck :
         checkNodeAt .black opponentForkCertificate.nodes 1
@@ -380,6 +379,7 @@ theorem opponentForkCertificate_nodes_checked :
           (.terminal (play (play opponentForkPosition (9, 7)) (4, 7)) .blackWin) = true := by
       native_decide
     simpa [opponentForkCertificate] using hcheck
+-- 穷举索引 0 至 4，证明手写分叉证书的全部节点均通过语义与有向边检查。
 
 example : Nonempty (CertificateTree .black opponentForkPosition) := by
   have htree := compact_reify_at opponentForkCertificate .black 0 (by native_decide)

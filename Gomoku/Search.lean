@@ -1,13 +1,11 @@
 import Gomoku.Certificate
 
-namespace Gomoku
-
 /-!
-The searcher boundary is intentionally small.  A search program may use any
-algorithm or heuristic, but the only object it may hand to the trusted side is
-a `CompactCertificate`.  No search result is a theorem until
-`checkCertificate` succeeds in Lean.
+搜索层：枚举并排序候选落子，进行快速五连检测、两层与有限深度 AND/OR 搜索，
+再把未受信候选树编译为 `CompactCertificate`。任何搜索结果都必须通过 Lean 检查器后才能成为定理。
 -/
+
+namespace Gomoku
 
 structure SearchConfig where
   target : Player := .black
@@ -43,9 +41,9 @@ theorem coordAtIndex_coordIndex (c : Coord) :
   · apply Fin.ext
     simp [coordAtIndex, coordIndex]
     omega
--- 证明坐标先编码再解码仍得到原坐标，即 `coordAtIndex` 是 `coordIndex` 的左逆。
   · apply Fin.ext
     simp [coordAtIndex, coordIndex]
+-- 证明坐标先编码再解码仍得到原坐标，即 `coordAtIndex` 是 `coordIndex` 的左逆。
 
 theorem coordIndex_coordAtIndex (i : Fin 225) :
     coordIndex (coordAtIndex i) = i := by
@@ -174,8 +172,8 @@ theorem mem_candidateMoves_iff (s : Position) (p : Player) (c : Coord) :
       s.turn = p ∧ c ∈ allCoords ∧ legalMove s c := by
   by_cases hturn : s.turn = p
   · simp [candidateMoves, hturn]
--- 精确刻画参考候选数组的成员条件。
   · simp [candidateMoves, hturn]
+-- 精确刻画参考候选数组的成员条件。
 
 theorem mem_candidateMovesFast_iff_mem_candidateMoves (s : Position) (p : Player)
     (c : Coord) :
@@ -402,7 +400,6 @@ theorem mem_tacticalCandidateMovesFast_iff (s : Position) (p : Player) (c : Coor
             (winningCellsMask s (Player.other p)).get (coordIndex c) = true :=
           (winningCellsMask_get_iff s (Player.other p) c).mpr hdef
         simp [hwin, hdefM, hmove]
--- 证明战术分组后的快速候选数组与排序前的数组具有相同成员集合。
       · have hdefM :
             (winningCellsMask s (Player.other p)).get (coordIndex c) = false := by
           cases hmask :
@@ -412,6 +409,7 @@ theorem mem_tacticalCandidateMovesFast_iff (s : Position) (p : Player) (c : Coor
               exact (hdef
                 ((winningCellsMask_get_iff s (Player.other p) c).mp hmask)).elim
         simp [hwin, hdefM, hmove]
+-- 证明战术分组后的快速候选数组与排序前的数组具有相同成员集合。
 
 def tacticalCandidateMoves (s : Position) (p : Player) : Array Coord :=
   tacticalCandidateMovesFast s p

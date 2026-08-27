@@ -1,5 +1,9 @@
 import Gomoku.Game
 
+/-!
+战术层：把开放三、开放四、断三、跳四和制胜点提升为带轮次、合法性与安全条件的强制胜引理。
+-/
+
 namespace Gomoku
 
 abbrev PatternWitness := Coord × Direction
@@ -250,7 +254,6 @@ theorem brokenOpenThree_has_fourExtension
       calc
         (b.place m p).cell q = b.cell q := Board.place_other b hqm p
         _ = .stone p := hqcell
--- 分别填补两种断三模式的内部缺口，证明断三至少能扩展成一个四连。
     · rcases h1 with ⟨q, hqstep, hqcell⟩
       have hqm : q ≠ m := by
         intro hqm
@@ -308,6 +311,7 @@ theorem brokenOpenThree_has_fourExtension
       calc
         (b.place m p).cell q = b.cell q := Board.place_other b hqm p
         _ = .stone p := hqcell
+-- 分别填补两种断三模式的内部缺口，证明断三至少能扩展成一个四连。
 
 def HasDoubleFourThreat (s : Position) (p : Player) : Prop :=
   2 ≤ (FourExtensionCells s.board p).card

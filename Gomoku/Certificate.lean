@@ -1,5 +1,9 @@
 import Gomoku.Tactics
 
+/-!
+可信证书层：定义依赖类型证明树与可执行紧凑证书，检查节点、边和根局面，并证明检查通过即可重构强制胜证明。
+-/
+
 namespace Gomoku
 
 inductive CertificateTree (target : Player) : Position → Type where

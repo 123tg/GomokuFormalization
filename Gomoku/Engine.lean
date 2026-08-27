@@ -368,7 +368,6 @@ def runEngineDepths (cfg : EngineConfig) (s : Position) (target : Player) :
       | .cutoff =>
           { tree := none, depth := none
             status := .nodeLimit, state := step.state }
--- 从给定深度开始执行迭代加深，直到找到候选树、达到最大深度或耗尽节点预算。
   | state, depth, remaining + 1 =>
       let step := searchWithEngine cfg state depth s target
       match step.outcome with
@@ -380,6 +379,7 @@ def runEngineDepths (cfg : EngineConfig) (s : Position) (target : Player) :
       | .cutoff =>
           { tree := none, depth := none
             status := .nodeLimit, state := step.state }
+-- 从给定深度开始执行迭代加深，直到找到候选树、达到最大深度或耗尽节点预算。
 
 def runEngineFrom (cfg : EngineConfig) (memo : EngineMemo)
     (s : Position) (target : Player) : EngineReport :=

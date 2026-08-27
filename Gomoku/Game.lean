@@ -1,5 +1,9 @@
 import Gomoku.Rules
 
+/-!
+博弈语义层：用策略与归纳的 AND/OR 强制胜谓词刻画“目标玩家无论对手如何应对都能获胜”。
+-/
+
 namespace Gomoku
 
 def Strategy (target : Player) : Type :=

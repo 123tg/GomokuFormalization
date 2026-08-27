@@ -1,5 +1,9 @@
 import Gomoku.Basic
 
+/-!
+棋盘几何层：定义四个连线方向、坐标步进、连续段、五连以及开放三、开放四、断三和跳四等棋形。
+-/
+
 namespace Gomoku
 
 inductive Direction where

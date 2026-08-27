@@ -1,5 +1,9 @@
 import Gomoku.Geometry
 
+/-!
+规则与状态层：定义终局结果、局面、合法落子、可达性，并证明合法对局中的轮次、计数和胜者不变量。
+-/
+
 namespace Gomoku
 
 inductive Outcome where
