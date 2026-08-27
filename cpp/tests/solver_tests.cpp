@@ -98,6 +98,73 @@ void testOpponentForkCertificate() {
           "opponent root must cover both legal replies");
 }
 
+void testVcfHintCertificate() {
+  gomoku::SearchConfig config;
+  config.maxDepth = 3;
+  config.maxVcfDepth = 3;
+  config.maxVcfNodes = 100;
+  config.maxNodes = 1'000;
+  config.maxProverMoves = 1;
+  gomoku::DfpnSolver solver(config, gomoku::Player::black);
+  const gomoku::Position root = gomoku::vcfOpenFourExample();
+  require(!root.board.terminal().has_value(),
+          "VCF root should be non-terminal");
+  require(root.board.emptyMoves().size() == 3,
+          "VCF root should have three legal moves");
+
+  const gomoku::SolveResult result = solver.solve(root);
+  require(result.status == gomoku::SolveStatus::found,
+          "bounded VCF hint should guide selective DFPN to the proof");
+  require(result.depth == 3, "open-four VCF should need three plies");
+  require(result.stats.vcfRootSolved,
+          "VCF oracle should recognize the root forcing line");
+  require(result.stats.vcfNodes > 0,
+          "VCF oracle should report its bounded work");
+  require(result.certificate.has_value(),
+          "VCF-guided result should contain a certificate");
+  require(result.certificate->nodes.size() == 6,
+          "two-reply open-four proof should have six nodes");
+
+  const auto& rootNode = result.certificate->nodes.front();
+  require(rootNode.kind == gomoku::CertificateKind::proverMove,
+          "VCF proof should start with a prover move");
+  require(rootNode.move == gomoku::Coord{5, 7},
+          "VCF oracle should choose the double-ended four at (5,7)");
+  require(rootNode.child < result.certificate->nodes.size(),
+          "VCF root child should be valid");
+  const auto& opponentNode = result.certificate->nodes[rootNode.child];
+  require(opponentNode.kind == gomoku::CertificateKind::opponentMoves,
+          "VCF attack should be followed by an opponent AND node");
+  require(opponentNode.children.size() == 2,
+          "VCF certificate must retain both legal opponent replies");
+
+  gomoku::SearchConfig limitedConfig;
+  limitedConfig.maxDepth = 3;
+  limitedConfig.maxVcfDepth = 3;
+  limitedConfig.maxVcfNodes = 1;
+  limitedConfig.maxNodes = 1'000;
+  gomoku::DfpnSolver limitedSolver(limitedConfig, gomoku::Player::black);
+  const gomoku::SolveResult limitedResult = limitedSolver.solve(root);
+  require(limitedResult.stats.vcfBudgetExhausted,
+          "VCF probe should report its independent node budget");
+  require(!limitedResult.stats.vcfRootSolved,
+          "an interrupted VCF probe must not report a solved root");
+  require(limitedResult.status == gomoku::SolveStatus::found,
+          "VCF budget exhaustion must not stop complete DFPN search");
+
+  gomoku::SearchConfig disabledConfig;
+  disabledConfig.maxDepth = 3;
+  disabledConfig.maxVcfDepth = 0;
+  disabledConfig.maxNodes = 1'000;
+  gomoku::DfpnSolver disabledSolver(disabledConfig,
+                                    gomoku::Player::black);
+  const gomoku::SolveResult disabledResult = disabledSolver.solve(root);
+  require(disabledResult.stats.vcfNodes == 0,
+          "zero VCF depth should disable the oracle");
+  require(disabledResult.status == gomoku::SolveStatus::found,
+          "complete DFPN should prove the line without VCF guidance");
+}
+
 void testResourceLimits() {
   gomoku::SearchConfig nodeConfig;
   nodeConfig.maxDepth = 2;
@@ -133,6 +200,7 @@ int main() {
     testParser();
     testImmediateCertificate();
     testOpponentForkCertificate();
+    testVcfHintCertificate();
     testResourceLimits();
     std::cout << "all C++ solver tests passed\n";
     return 0;

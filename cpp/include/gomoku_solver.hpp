@@ -78,7 +78,9 @@ Position play(const Position& position, Coord move);
 
 struct SearchConfig {
   std::uint16_t maxDepth = 6;
+  std::uint16_t maxVcfDepth = 7;
   std::uint64_t maxNodes = 1'000'000;
+  std::uint64_t maxVcfNodes = 100'000;
   std::size_t maxTableEntries = 1'000'000;
   std::size_t maxCertificateNodes = 2'000'000;
   std::size_t maxProverMoves = 0;
@@ -98,7 +100,11 @@ const char* solveStatusName(SolveStatus status);
 struct SearchStats {
   std::uint64_t expandedNodes = 0;
   std::uint64_t tableHits = 0;
+  std::uint64_t vcfNodes = 0;
+  std::uint64_t vcfTableHits = 0;
   std::size_t tableEntries = 0;
+  bool vcfRootSolved = false;
+  bool vcfBudgetExhausted = false;
 };
 
 enum class CertificateKind : std::uint8_t {
@@ -161,5 +167,6 @@ void writeLeanCertificate(std::ostream& output, const Position& root,
 
 Position immediateWinExample();
 Position opponentForkExample();
+Position vcfOpenFourExample();
 
 }  // namespace gomoku

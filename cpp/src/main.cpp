@@ -38,7 +38,9 @@ void usage(std::ostream& output) {
       "\n"
       "Options:\n"
       "  --max-depth N             iterative DFPN ply bound (default 6)\n"
+      "  --max-vcf-depth N         bounded VCF hint horizon (default 7)\n"
       "  --max-nodes N             expanded-node budget, 0 is unlimited\n"
+      "  --max-vcf-nodes N         VCF probe budget, 0 is unlimited\n"
       "  --max-table-entries N     transposition-table bound, 0 is unlimited\n"
       "  --max-certificate-nodes N emitted certificate bound\n"
       "  --max-prover-moves N      selective target width, 0 is complete\n"
@@ -77,8 +79,16 @@ int main(int argc, char** argv) {
           throw std::runtime_error("--max-depth cannot exceed 225 plies");
         }
         config.maxDepth = static_cast<std::uint16_t>(depth);
+      } else if (option == "--max-vcf-depth") {
+        const std::uint64_t depth = parseUnsigned(requireValue(), option);
+        if (depth > static_cast<std::uint64_t>(gomoku::boardCells)) {
+          throw std::runtime_error("--max-vcf-depth cannot exceed 225 plies");
+        }
+        config.maxVcfDepth = static_cast<std::uint16_t>(depth);
       } else if (option == "--max-nodes") {
         config.maxNodes = parseUnsigned(requireValue(), option);
+      } else if (option == "--max-vcf-nodes") {
+        config.maxVcfNodes = parseUnsigned(requireValue(), option);
       } else if (option == "--max-table-entries") {
         config.maxTableEntries = parseSize(requireValue(), option);
       } else if (option == "--max-certificate-nodes") {
@@ -122,6 +132,13 @@ int main(int argc, char** argv) {
     std::cout << "expanded_nodes=" << result.stats.expandedNodes << "\n";
     std::cout << "table_entries=" << result.stats.tableEntries << "\n";
     std::cout << "table_hits=" << result.stats.tableHits << "\n";
+    std::cout << "vcf_nodes=" << result.stats.vcfNodes << "\n";
+    std::cout << "vcf_table_hits=" << result.stats.vcfTableHits << "\n";
+    std::cout << "vcf_root_solved="
+              << (result.stats.vcfRootSolved ? "true" : "false") << "\n";
+    std::cout << "vcf_budget_exhausted="
+              << (result.stats.vcfBudgetExhausted ? "true" : "false")
+              << "\n";
     std::cout << "elapsed_ms=" << elapsed.count() << "\n";
 
     if (result.status != gomoku::SolveStatus::found ||

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -156,6 +157,10 @@ struct Entry {
   std::uint32_t disproof = 1;
   bool expanded = false;
   std::vector<Coord> moves;
+};
+
+struct VcfEntry {
+  std::optional<Coord> move;
 };
 
 struct ScoredMove {
@@ -350,14 +355,20 @@ struct DfpnSolver::Impl {
   SearchConfig config;
   Player target;
   std::unordered_map<StateKey, Entry, StateKeyHash> table;
+  std::unordered_map<StateKey, VcfEntry, StateKeyHash> vcfTable;
+  std::unordered_map<StateKey, Coord, StateKeyHash> vcfHints;
   SearchStats stats;
   SolveStatus limitStatus = SolveStatus::depthLimit;
   bool stopped = false;
+  bool vcfStopped = false;
 
   explicit Impl(SearchConfig configValue, Player targetValue)
       : config(configValue), target(targetValue) {
     table.reserve(std::min<std::size_t>(config.maxTableEntries == 0
         ? 262'144 : config.maxTableEntries, 262'144));
+    vcfTable.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(
+        config.maxVcfNodes == 0 ? 65'536 : config.maxVcfNodes, 65'536)));
+    vcfHints.reserve(4'096);
   }
 
   Entry* ensureEntry(const Position& position, std::uint16_t depth) {
@@ -393,6 +404,118 @@ struct DfpnSolver::Impl {
     }
     auto inserted = table.emplace(key, std::move(entry));
     return &inserted.first->second;
+  }
+
+  std::vector<Coord> sortedEmptyMoves(const Board& board) const {
+    std::vector<Coord> moves = board.emptyMoves();
+    std::stable_sort(moves.begin(), moves.end(),
+        [&board](Coord lhs, Coord rhs) {
+          const int lhsScore = neighborhoodScore(board, lhs);
+          const int rhsScore = neighborhoodScore(board, rhs);
+          if (lhsScore != rhsScore) {
+            return lhsScore > rhsScore;
+          }
+          if (lhs.y != rhs.y) {
+            return lhs.y < rhs.y;
+          }
+          return lhs.x < rhs.x;
+        });
+    return moves;
+  }
+
+  std::vector<Coord> winningMoves(const Board& board, Player player) const {
+    std::vector<Coord> result;
+    for (const Coord move : sortedEmptyMoves(board)) {
+      if (board.createsFive(move, player)) {
+        result.push_back(move);
+      }
+    }
+    return result;
+  }
+
+  std::optional<Coord> finishVcf(const StateKey& key,
+                                 const Position& position,
+                                 std::optional<Coord> move) {
+    vcfTable.insert_or_assign(key, VcfEntry{move});
+    if (move.has_value()) {
+      vcfHints.insert_or_assign(makeKey(position, 0, target), *move);
+    }
+    return move;
+  }
+
+  std::optional<Coord> probeVcf(const Position& position,
+                                std::uint16_t remaining) {
+    const StateKey key = makeKey(position, remaining, target);
+    const auto cached = vcfTable.find(key);
+    if (cached != vcfTable.end()) {
+      ++stats.vcfTableHits;
+      return cached->second.move;
+    }
+    if (vcfStopped) {
+      return std::nullopt;
+    }
+    if (config.maxVcfNodes != 0 &&
+        stats.vcfNodes >= config.maxVcfNodes) {
+      stats.vcfBudgetExhausted = true;
+      vcfStopped = true;
+      return std::nullopt;
+    }
+    ++stats.vcfNodes;
+
+    if (remaining == 0 || position.turn != target ||
+        position.board.terminal().has_value()) {
+      return finishVcf(key, position, std::nullopt);
+    }
+
+    const std::vector<Coord> candidates = sortedEmptyMoves(position.board);
+    for (const Coord move : candidates) {
+      if (position.board.createsFive(move, target)) {
+        return finishVcf(key, position, move);
+      }
+    }
+    if (remaining < 3) {
+      return finishVcf(key, position, std::nullopt);
+    }
+
+    for (const Coord move : candidates) {
+      if (vcfStopped) {
+        return std::nullopt;
+      }
+      const Position afterAttack = play(position, move);
+      const auto outcome = afterAttack.board.terminal();
+      if (outcome.has_value()) {
+        if (*outcome == playerOutcome(target)) {
+          return finishVcf(key, position, move);
+        }
+        continue;
+      }
+
+      const std::vector<Coord> targetThreats =
+          winningMoves(afterAttack.board, target);
+      if (targetThreats.empty()) {
+        continue;
+      }
+      if (!winningMoves(afterAttack.board, other(target)).empty()) {
+        continue;
+      }
+      if (targetThreats.size() >= 2) {
+        return finishVcf(key, position, move);
+      }
+
+      const Position afterBlock = play(afterAttack, targetThreats.front());
+      if (afterBlock.board.terminal().has_value()) {
+        continue;
+      }
+      const auto continuation = probeVcf(
+          afterBlock, static_cast<std::uint16_t>(remaining - 2));
+      if (continuation.has_value()) {
+        return finishVcf(key, position, move);
+      }
+      if (vcfStopped) {
+        return std::nullopt;
+      }
+    }
+    return finishVcf(key, position, std::nullopt);
   }
 
   std::vector<Coord> orderedMoves(const Position& position) const {
@@ -438,6 +561,16 @@ struct DfpnSolver::Impl {
         }
       }
       result.push_back(move.move);
+    }
+    if (prover) {
+      const auto hint = vcfHints.find(makeKey(position, 0, target));
+      if (hint != vcfHints.end()) {
+        const auto preferred = std::find(result.begin(), result.end(),
+                                         hint->second);
+        if (preferred != result.end()) {
+          std::rotate(result.begin(), preferred, std::next(preferred));
+        }
+      }
     }
     if (prover && config.maxProverMoves != 0 &&
         result.size() > config.maxProverMoves) {
@@ -585,13 +718,18 @@ struct DfpnSolver::Impl {
       if (stopped) {
         return;
       }
-      const auto beforeProof = current.proof;
-      const auto beforeDisproof = current.disproof;
-      recompute(position, depth);
-      const Entry after = table.find(key)->second;
-      if (after.proof == beforeProof && after.disproof == beforeDisproof) {
+      const auto selectedAfter = table.find(makeKey(
+          selected, static_cast<std::uint16_t>(depth - 1), target));
+      if (selectedAfter == table.end()) {
+        stopped = true;
+        limitStatus = SolveStatus::tableLimit;
         return;
       }
+      if (selectedAfter->second.proof == bestProof &&
+          selectedAfter->second.disproof == bestDisproof) {
+        return;
+      }
+      recompute(position, depth);
     }
   }
 
@@ -659,10 +797,18 @@ struct DfpnSolver::Impl {
   SolveResult solve(const Position& root) {
     stats = {};
     table.clear();
+    vcfTable.clear();
+    vcfHints.clear();
     stopped = false;
+    vcfStopped = false;
     limitStatus = SolveStatus::depthLimit;
 
     SolveResult result;
+    if (config.maxVcfDepth != 0 && root.turn == target) {
+      const std::uint16_t horizon = std::min(config.maxVcfDepth,
+                                             config.maxDepth);
+      stats.vcfRootSolved = probeVcf(root, horizon).has_value();
+    }
     for (std::uint32_t depthValue = 0; depthValue <= config.maxDepth;
          ++depthValue) {
       const auto depth = static_cast<std::uint16_t>(depthValue);
@@ -900,6 +1046,28 @@ Position opponentForkExample() {
     }
   }
   return {board, Player::white};
+}
+
+Position vcfOpenFourExample() {
+  Board board;
+  for (int y = 0; y < boardSize; ++y) {
+    for (int x = 0; x < boardSize; ++x) {
+      const Coord move{x, y};
+      if (move == Coord{4, 7} || move == Coord{5, 7} ||
+          move == Coord{9, 7}) {
+        continue;
+      }
+      if (move == Coord{6, 7} || move == Coord{7, 7} ||
+          move == Coord{8, 7}) {
+        board.place(move, Player::black);
+      } else if ((x + 2 * y) % 5 < 2) {
+        board.place(move, Player::black);
+      } else {
+        board.place(move, Player::white);
+      }
+    }
+  }
+  return {board, Player::black};
 }
 
 }  // namespace gomoku

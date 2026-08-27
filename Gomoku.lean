@@ -8,5 +8,6 @@ import Gomoku.Search
 import Gomoku.Engine
 import Gomoku.Generated.CppSmoke
 import Gomoku.Generated.CppFork
+import Gomoku.Generated.CppVcf
 import Gomoku.Examples
 import Gomoku.Adversarial
