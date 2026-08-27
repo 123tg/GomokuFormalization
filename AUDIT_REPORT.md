@@ -232,7 +232,7 @@ s.turn = p ∧ legalMove s m
 自动深搜前仍应依次完成：
 
 1. 在当前邻近着法和立即胜着优先之上，用增量威胁缓存实现必须防守优先的排序；
-2. 局面键和置换表，避免重复扫描相同子局面；
+2. 为哈希置换表增加容量/淘汰策略，并让生成证书共享重复子树；
 3. 增量维护空点数和终局信息；
 4. 将大规模搜索移到外部程序，只把生成的 Lean `CompactCertificate` 导入可信侧。
 
@@ -240,12 +240,15 @@ s.turn = p ∧ legalMove s m
 证书仍由 `checkNodeAt`/`checkCertificate` 重新计算并验证。后续若加入增量缓存，必须为
 缓存更新与 `hasAtLeastFive`、`WinningCells` 的对应关系增加独立定理和回归测试。
 
-### A8：缓存尚未成为递归搜索状态（已记录，未视为 soundness 缺陷）
+### A8：递归搜索缓存状态（已修正）
 
-`SearchMemo` 目前是安全的适配层：它能按“剩余深度 + 目标方 + 完整局面”查找候选树，
-命中结果随后仍交给证书检查器。现有 `searchCandidateTree` 仍是原始的无缓存递归函数，
-所以尚未获得实际的重复局面剪枝收益；下一步需要实现返回“结果 + 新缓存”的递归搜索，
-并证明命中路径与未命中路径产生相同的候选树/证书语义。
+基础 `SearchMemo` 已能由递归搜索携带；新增 `Gomoku.Engine` 又把生产型试验入口升级为
+`Std.HashMap SearchKey (Option CandidateTree)`。`SearchKey` 保留“剩余深度 + 目标方 +
+完整局面”，哈希表命中仍做精确键比较。引擎明确区分找到候选、完整深度内未找到和节点
+预算截断三种结果，预算截断不会写入负向缓存。缓存中的正向树可能来自不可信搜索状态，
+因此 `runCheckedEngine` 仍会把它编译为紧凑证书并调用 `checkLocalCertificateAt`；只有检查
+通过后，`runCheckedEngine_sound` 才推出 `CanForceWin`。剩余性能问题是局面与终局信息尚未
+增量维护、证书树尚未做 DAG 共享，以及完整 15×15 搜索规模仍远超常规构建测试。
 
 ## 审计完成标准
 

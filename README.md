@@ -19,6 +19,8 @@ Current modules:
 - `Gomoku.Certificate`: dependent strategy trees and a compact certificate-checking interface.
 - `Gomoku.Search`: the untrusted searcher boundary; only checked `CompactCertificate` values
   can cross into the trusted proof layer.
+- `Gomoku.Engine`: a budgeted, iterative-deepening AND/OR searcher with tactical ordering,
+  a hash-based transposition table, statistics, and a checked certificate boundary.
 - `Gomoku.Examples`: API-level sanity checks, horizontal/diagonal/boundary/overline examples,
   and executable board tests.
 - `Gomoku.Adversarial`: executable counterexamples and regression checks from the semantic audit.
@@ -74,8 +76,8 @@ pure-Lean searches remain too slow for routine builds because they repeatedly sc
 the module also exposes `tacticalCandidateMoves` for grouping immediate wins, defensive replies,
 and quiet moves. The fast grouping builds one fixed-size `winningCellsMask` per position, but the
 default search currently uses the cheaper immediate-win ordering. Incremental threat updates,
-transposition caching, and incremental terminal checks remain planned before using larger pure-Lean
-searches to generate certificates.
+cache eviction, certificate DAG sharing, and incremental terminal checks remain planned before
+using larger pure-Lean searches to generate certificates.
 
 The fast path also includes `createsFiveFast`: it checks only the at most 20 five-cell windows
 that contain the proposed move. `createsFiveFast_sound` and `createsFiveFast_complete` establish
@@ -88,11 +90,13 @@ global 15x15 strategy certificate.
 For future transposition tables, `PositionKey` stores the side to move together with a lossless
 225-cell vector. `boardKey_eq_iff` and `positionKey_eq_iff` prove that equal keys mean equal
 boards or positions; `containsPositionKey` provides the executable table-membership primitive.
-The cache is currently an interface only and is not yet used to prune the search. A
-`SearchMemo` adapter now also exposes a fuel/target/position key, checked hit and miss
-lemmas, and `checkedDepthCertificateForCached`; a cached tree is still rechecked by the
-certificate checker, and the recursive search itself has not yet been rewritten to carry
-and update the table.
+The base `SearchMemo` adapter exposes a fuel/target/position key and checked hit and miss
+lemmas. `Gomoku.Engine` adds a `Std.HashMap` transposition table, carries it through recursive
+AND/OR search and iterative deepening, and keeps node-limit cutoffs distinct from completed
+negative searches so a cutoff is never cached as failure. `engineTacticalCandidateMoves`
+uses the local at-most-20-window detector for immediate wins and forced blocks while retaining
+every legal candidate. `runCheckedEngine` recompiles a found tree and accepts it only after
+`checkLocalCertificateAt`; `runCheckedEngine_sound` is the theorem-facing boundary.
 
 Build with:
 

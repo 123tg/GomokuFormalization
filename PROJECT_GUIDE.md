@@ -56,7 +56,7 @@ theorem initial_black_wins :
   `not_immediateSafeDoubleOpenThree_of_opponentImmediate` 验证安全谓词不会误触发；
   `winningCell_ne_of_hasDoubleThreat` 把“单步防守最多占一个胜点”的公共逻辑抽成
   可复用定理。
-- 阶段 9（搜索器引导）已开始：`Gomoku.Search` 现在提供可执行的 225 点坐标表、
+- 阶段 9（搜索引擎骨架已完成，规模扩展继续）：`Gomoku.Search` 现在提供可执行的 225 点坐标表、
   合法候选着法过滤、首个立即胜着扫描，以及局部立即胜着证书候选生成器。候选着法有
   一个参考实现和一个把终局检查提到棋盘级别的 `candidateMovesFast` 实现；
   `mem_candidateMovesFast_iff_mem_candidateMoves` 证明两者的成员关系一致。新增的
@@ -75,12 +75,11 @@ theorem initial_black_wins :
   合法轮次下的快速结果与 `terminal` 胜负标签对应起来。Search 文件中的回归例子覆盖
   横、竖、两种斜线、边界窗口和不足五子的反例。
   同一阶段还定义了无碰撞的 `PositionKey`（轮次加 225 格 `Vector Cell`）、
-  `boardKey_eq_iff`/`positionKey_eq_iff` 和 `containsPositionKey`；它们先作为置换表
-  的精确键接口验证，尚未把缓存剪枝接入深搜。
-  本轮又增加了 `SearchMemo`/`SearchKey` 适配层：键同时记录剩余深度、目标方和完整局面，
-  并给出缓存命中/未命中等价性引理以及 `checkedDepthCertificateForCached`。缓存得到的
-  候选树仍会重新经过局部证书检查，因此缓存不是可信证明来源；真正让递归搜索携带、更新
-  并利用置换表仍是下一阶段工作。
+  `boardKey_eq_iff`/`positionKey_eq_iff` 和 `containsPositionKey`。`SearchMemo`/`SearchKey`
+  适配层的键同时记录剩余深度、目标方和完整局面；基础递归搜索已能携带并更新数组缓存，
+  缓存得到的候选树仍会重新经过局部证书检查，因此缓存不是可信证明来源。
+  新增 `Gomoku.Engine` 后，生产型试验入口改用 `Std.HashMap` 置换表，并由标准哈希表在桶内
+  精确比较 `SearchKey`；哈希冲突只影响性能，不会把不同局面当作同一局面。
   `checkLocalCertificate` 不改变全局根约束，而是允许任意局面作为局部证书根；
   `twoPlyImmediateCertificate` 可从有限的“对手应手 -> 我方立即胜着”表生成完整
   `opponentMoves` 证书，`immediateResponseTable` 则枚举所有合法对手应手并尝试自动
@@ -91,18 +90,26 @@ theorem initial_black_wins :
   完整 `terminal` 扫描以便回归比较；`immediateWinningMovesFirst_mem_legal` 和
   `createsFiveFast_terminal_of_immediateCandidate` 证明快速命中只接受合法着法并对应
   真实终局胜着。
+  `Gomoku.Engine` 进一步提供迭代加深、硬节点预算、`found`/`notFound`/`cutoff` 三态递归
+  结果、缓存命中和节点访问统计。预算耗尽产生的 `cutoff` 不会写成失败缓存；目标方节点
+  只需找到一个成功子树，对手节点仍完整展开每个合法应手。新的
+  `engineTacticalCandidateMoves` 用 `createsFiveFast` 将立即胜着、必须防守点和安静着法
+  排序，并由 `mem_engineTacticalCandidateMoves_iff` 证明没有删除候选着法。
+  `runCheckedEngine` 只返回通过 `checkLocalCertificateAt` 的证书，
+  `runCheckedEngine_sound` 将任何被接受结果连接到 `CanForceWin`。
   `Gomoku/Adversarial.lean` 还用一个固定的五节点双威胁候选树回归测试了
   `CandidateTree -> CompactCertificate -> checkLocalCertificateAt -> CanForceWin`
   的完整链路；该测试覆盖对手节点的全部两个合法应手。真实 15×15 策略证书尚未导入，
   因此 `initial_black_wins` 仍未声明。
 
-最近一次验证：`lake build` 全工程通过，随后单独编译 `Gomoku/Adversarial.lean`
-也通过。构建输出中的 linter 警告（文件头注释、
+最近一次验证：加入 `Gomoku.Engine` 后，`lake build` 全工程通过（8717 jobs），
+`lake build Gomoku.Engine` 的预算、缓存和证书回归也通过。构建输出中的 linter 警告（文件头注释、
 测试模块使用 `native_decide`）不等同于 Lean 类型检查失败；核心 soundness 定理仍不
 依赖 `native_decide`。固定候选树回归已在单独构建中通过；在把终局检查提到棋盘级别后，
 两空点局面的 `checkedDepthCertificateFor 2` smoke test 也已通过。快速成五判定的四方向
 和边界回归，以及它和完整 `terminal` 的合法着法等价性也已通过。更深或更宽的搜索仍会
-反复扫描 225 点，暂不作为常规构建目标，待加入着法排序、局面缓存和增量终局计算后再扩展。
+反复扫描 225 点，暂不作为常规构建目标，待加入增量终局/威胁维护、缓存容量控制和
+证书 DAG 共享后再扩展。
 
 ---
 
@@ -195,6 +202,8 @@ Fin 15 只允许 0 到 14，因此坐标不会越界。
 | Gomoku/Game.lean | Strategy、ForceWin、CanForceWin |
 | Gomoku/Tactics.lean | WinningMoves、活三/活四和局部必胜定理 |
 | Gomoku/Certificate.lean | 依赖类型策略树和紧凑证书检查器 |
+| Gomoku/Search.lean | 候选生成、基础有限深度搜索和候选证书编译 |
+| Gomoku/Engine.lean | 哈希置换表、节点预算、迭代加深和受检搜索入口 |
 | Gomoku/Examples.lean | 构造局面、正反例和 API 测试 |
 | Gomoku/Adversarial.lean | 对抗性反例、语义审计和证书拒绝测试 |
 | Gomoku.lean | 统一导入所有模块 |
@@ -638,6 +647,8 @@ checkCertificate c = true
 - [x] 双活三多回合安全谓词和立即响应特例的博弈 soundness 定理。
 - [x] 紧凑证书到 CertificateTree 的可信转换。
 - [x] 外部搜索器与 Lean 校验器之间的最小适配接口。
+- [x] 带硬节点预算、哈希置换表、迭代加深和统计信息的 Lean 搜索引擎。
+- [x] 搜索引擎候选树重新通过局部证书检查，并给出 `runCheckedEngine_sound`。
 - [x] 非终局合法着法存在性与默认合法策略接口。
 - [x] CertificateTree 与 CanForceWin 的双向等价接口。
 - [ ] 对称性压缩的独立正确性证明。
@@ -818,11 +829,35 @@ theorem checkedDepthCertificateFor_sound ... : CanForceWin s target
 每个成功结果仍要通过 `checkLocalCertificateAt`，因此搜索树的递归实现和启发式
 可以以后替换，而不改变可信证明层。
 
-当前回归覆盖两个层次：固定五节点对手分支树验证编译器和检查器，两个空点局面的
+在上述基础接口之上，`Gomoku.Engine` 提供面向实际试验的入口：
+
+```lean
+structure EngineConfig where
+  maxDepth : Nat
+  maxNodes : Nat
+  memoCapacity : Nat
+  useThreatOrdering : Bool
+
+def runEngine (cfg : EngineConfig) (s : Position)
+    (target : Player) : EngineReport
+def runCheckedEngine (cfg : EngineConfig) (s : Position)
+    (target : Player) : CheckedEngineResult
+theorem runCheckedEngine_sound ... : CanForceWin s target
+```
+
+迭代深度从 0 增长到 `maxDepth`。`maxNodes = 0` 表示不设节点上限；其他值是跨所有
+迭代共享的硬预算。置换表只缓存已经得到 `found` 或 `notFound` 的完整搜索结果，不缓存
+因预算耗尽产生的 `cutoff`。哈希键仍包含“剩余深度 + 目标方 + 完整局面”，命中后的
+候选树最终还要重新编译并通过 `checkLocalCertificateAt`。
+
+当前回归覆盖三个层次：固定五节点对手分支树验证编译器和检查器，两个空点局面的
 深度 2 搜索验证递归搜索的最小闭环。`tacticalCandidateMovesFast` 已把对手立即胜点
 预先扫描为固定长度掩码，并由成员等价性定理保证不改变候选集合；掩码构造目前仍会
 重新计算整盘威胁，且尚无增量威胁缓存，所以它目前作为可选实验接口，不接入默认深搜。这不意味着
 已经有可扩展的 15×15 求解器，也不改变外部搜索器不属于可信基础的约定。
+`Gomoku.Engine` 另用一手立即胜局面验证：深度 1、3 个节点可找到并接受证书；2 个节点
+会准确报告 `nodeLimit`；复用首次运行的置换表后可用 0 个新节点、2 次缓存命中返回结果。
+这些测试验证控制流和缓存行为，不等同于完整开局求解。
 
 ### 阶段 F：导入证书并证明最终定理
 
