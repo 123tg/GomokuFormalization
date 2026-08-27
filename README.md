@@ -19,8 +19,9 @@ Current modules:
 - `Gomoku.Certificate`: dependent strategy trees and a compact certificate-checking interface.
 - `Gomoku.Search`: the untrusted searcher boundary; only checked `CompactCertificate` values
   can cross into the trusted proof layer.
-- `Gomoku.Engine`: a budgeted, iterative-deepening AND/OR searcher with tactical ordering,
-  a hash-based transposition table, statistics, and a checked certificate boundary.
+- `Gomoku.Engine`: a budgeted, iterative-deepening AND/OR searcher with forced tactical
+  pruning, an optional target-side width limit, a bounded hash transposition table,
+  statistics, and a checked certificate boundary.
 - `Gomoku.Examples`: API-level sanity checks, horizontal/diagonal/boundary/overline examples,
   and executable board tests.
 - `Gomoku.Adversarial`: executable counterexamples and regression checks from the semantic audit.
@@ -95,7 +96,12 @@ lemmas. `Gomoku.Engine` adds a `Std.HashMap` transposition table, carries it thr
 AND/OR search and iterative deepening, and keeps node-limit cutoffs distinct from completed
 negative searches so a cutoff is never cached as failure. `engineTacticalCandidateMoves`
 uses the local at-most-20-window detector for immediate wins and forced blocks while retaining
-every legal candidate. `runCheckedEngine` recompiles a found tree and accepts it only after
+every legal candidate. At target-player nodes, `engineProverCandidateMoves` searches only an
+available immediate win or a forced one-ply defense before considering quiet moves; opponent
+nodes still enumerate every legal reply. `maxProverMoves` optionally makes target-side search
+selective, while `maxMemoEntries` prevents new cache entries after a hard insertion limit and
+reports skipped stores. A positive width limit may miss a win, but cannot certify a false one:
+`runCheckedEngine` recompiles a found tree and accepts it only after
 `checkLocalCertificateAt`; `runCheckedEngine_sound` is the theorem-facing boundary.
 
 Build with:
