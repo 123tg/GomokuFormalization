@@ -107,17 +107,22 @@ theorem initial_black_wins :
   强制防守剪枝和可选宽度限制，对手节点始终生成全部合法着法。C++ 输出仍是现有
   `CompactCertificate`，没有修改证书表示，也不通过 FFI 进入可信基础。
   `Gomoku.Generated.CppSmoke` 和 `Gomoku.Generated.CppFork` 分别检查 C++ 生成的两节点
-  立即胜证书和五节点全应手证书，并由 `local_certificate_at_sound` 得到 `CanForceWin`。
+  立即胜证书和五节点全应手证书；新增的有界 VCF 预搜索只提供目标方着法提示，
+  `Gomoku.Generated.CppVcf` 用六节点证书覆盖开放四的两个合法防守。三者都由
+  `local_certificate_at_sound` 得到 `CanForceWin`，对手分支没有因 VCF 而省略。
   `Gomoku/Adversarial.lean` 还用一个固定的五节点双威胁候选树回归测试了
   `CandidateTree -> CompactCertificate -> checkLocalCertificateAt -> CanForceWin`
   的完整链路；该测试覆盖对手节点的全部两个合法应手。真实 15×15 策略证书尚未导入，
   因此 `initial_black_wins` 仍未声明。
 
 最近一次验证：C++17 版本已用 GCC 10.3 在 `-O3 -DNDEBUG` 下构建，
-`gomoku_tests.exe` 的几何、解析、OR/AND 证明和三类资源上限回归全部通过；立即胜和
-对手全应手示例分别生成 2 节点与 5 节点证书。`lake build Gomoku.Generated.CppSmoke`
-和 `lake build Gomoku.Generated.CppFork` 均通过（各 8712 jobs），`lake build` 全工程通过
-（8719 jobs）。预算、选择性分支、强制防守、缓存上限和证书回归均通过。构建输出中的
+`gomoku_tests.exe` 的几何、解析、OR/AND/VCF 证明和资源上限回归全部通过；立即胜、
+对手全应手和开放四 VCF 示例分别生成 2、5、6 节点证书。VCF 开启时该开放四回归的
+DFPN 展开节点从 13 降到 7；VCF 节点预算耗尽或关闭时，完整 DFPN 仍生成同一证明。
+`lake build Gomoku.Generated.CppSmoke`、`lake build Gomoku.Generated.CppFork` 和
+`lake build Gomoku.Generated.CppVcf` 均通过；先顺序构建内存占用较高的模块后，
+`lake build` 全工程通过（8720 jobs）。预算、选择性分支、强制防守、缓存上限和证书回归
+均通过。构建输出中的
 linter 警告（文件头注释、测试模块使用 `native_decide`）不等同于 Lean 类型检查失败；
 核心 soundness 定理仍不
 依赖 `native_decide`。固定候选树回归已在单独构建中通过；在把终局检查提到棋盘级别后，
@@ -670,6 +675,7 @@ checkCertificate c = true
 - [x] 搜索引擎候选树重新通过局部证书检查，并给出 `runCheckedEngine_sound`。
 - [x] C++17 bitboard/DFPN 外部搜索器原型及不改变 `CompactCertificate` 的 Lean 导出器。
 - [x] C++ OR/AND 两类生成证书通过 `checkLocalCertificateAt` 和 soundness 回归。
+- [x] 有独立深度/节点预算的 C++ VCF 预搜索、DFPN 提示集成和六节点 Lean 回归。
 - [x] 非终局合法着法存在性与默认合法策略接口。
 - [x] CertificateTree 与 CanForceWin 的双向等价接口。
 - [ ] 对称性压缩的独立正确性证明。
@@ -900,13 +906,16 @@ soundness 的选择性搜索开关。搜索器的 `found` 只有通过证书检�
 1. 双方各用四个 64 位字保存 225 个棋盘点，落子时增量更新 Zobrist 哈希；
 2. 置换表键仍保存完整双方 bitboard、轮次、目标方和剩余深度，哈希只影响桶选择；
 3. 迭代深度 DFPN 使用 proof/disproof number 引导 AND/OR 展开；
-4. 节点数、置换表条目数和输出证书节点数分别设限，并报告不同退出状态；
-5. 输出器把根棋盘写成落子数组，把每个后继位置写成前一位置的 `play`，最后生成现有
+4. 有界 VCF 预搜索识别立即胜和连续冲四链，结果只用于目标方着法排序；VCF 深度与节点数
+   独立设限，耗尽时 DFPN 继续运行；
+5. DFPN 节点数、置换表条目数和输出证书节点数分别设限，并报告不同退出状态；
+6. 输出器把根棋盘写成落子数组，把每个后继位置写成前一位置的 `play`，最后生成现有
    `terminal`/`proverMove`/`opponentMoves` 节点和 Lean 检查定理。
 
 构建、输入格式和命令行参数见 `cpp/README.md`。当前 C++ 单元测试覆盖成五几何、位置解析、
-两节点 OR 证书、五节点 AND 证书以及节点/置换表/证书三类资源上限。尚未加入专用 VCF/VCT
-阶段、并行搜索、置换表替换策略和证书 DAG 共享；因此这是可验证接口和性能数据结构原型，
+两节点 OR 证书、五节点 AND 证书、六节点 VCF 证书以及节点/置换表/证书/VCF 资源上限。
+开放四回归中，VCF 提示把 DFPN 展开节点从 13 降到 7；VCF 预算耗尽或关闭时，完整 DFPN
+仍能生成同一证明。尚未加入 VCT、并行搜索、置换表替换策略和证书 DAG 共享；因此这是可验证接口和性能数据结构原型，
 还不是完整开局求解器。C++ 的 `depthLimit` 或资源上限只表示没有找到证明，不能推出不可胜。
 
 ### 阶段 F：导入证书并证明最终定理

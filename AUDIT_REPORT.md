@@ -234,7 +234,7 @@ s.turn = p ∧ legalMove s m
 1. 把当前逐局面重算的立即胜着/强制防守分组升级为增量威胁缓存；
 2. 为已有硬条目上限的哈希置换表增加替换/淘汰策略，并让生成证书共享重复子树；
 3. 增量维护空点数和终局信息；
-4. 在现有 C++ DFPN 原型上加入 VCF/VCT、并行和更大局面基准，只把生成的 Lean
+4. 扩展现有 C++ 有界 VCF，加入 VCT、并行和更大局面基准，只把生成的 Lean
    `CompactCertificate` 导入可信侧。
 
 快速终局路径本身不改变可信边界：搜索器可用 `createsFiveFast` 排序或剪枝，但导入的
@@ -263,13 +263,21 @@ bitboard、轮次、目标方和剩余深度，所以 Zobrist 碰撞只影响哈
 节点预算、置换表容量和证书节点容量分别产生独立状态。目标方可做强制着法剪枝和选择性
 宽度限制；对手节点不使用宽度剪枝，输出的 `opponentMoves` 仍列出全部合法应手。
 
+新增的 VCF 预搜索有独立深度和节点预算，只识别立即胜与连续冲四链。单一胜点时递归检查
+唯一有效封堵，至少两个胜点时利用“一手最多占一个点”结束探测；若防守方有立即胜着则拒绝
+该攻击候选。探测结果只把一个目标方着法移到 DFPN 候选首位，预算耗尽不会终止 DFPN。
+同时修正了 DFPN 在多个子节点 proof/disproof 数并列时的过早退出：现在依据被选子节点自身
+是否变化判断进展。开放四回归中，启用 VCF 时展开 7 个 DFPN 节点，关闭或耗尽 VCF 时展开
+13 个节点，三种情况最终都得到同一六节点证明。
+
 搜索器、C++ 规则实现和导出器全部是不可信组件。当前回归让 C++ 分别生成两节点立即胜
-证书和五节点对手全应手证书；`Gomoku.Generated.CppSmoke` 与
-`Gomoku.Generated.CppFork` 随后调用未改动的 `checkLocalCertificateAt`，并仅通过
+证书、五节点对手全应手证书和六节点开放四 VCF 证书；`Gomoku.Generated.CppSmoke`、
+`Gomoku.Generated.CppFork` 与 `Gomoku.Generated.CppVcf` 随后调用未改动的
+`checkLocalCertificateAt`，并仅通过
 `local_certificate_at_sound` 得到 `CanForceWin`。因此错误坐标、错误轮次、遗漏应手、
 错误子局面或错误终局仍会被 Lean 拒绝。
 
-当前不足包括：DFPN 尚未叠加专用 VCF/VCT 搜索；没有多线程、置换表淘汰和证书 DAG
+当前不足包括：VCF 尚未扩展到 VCT/开放三威胁空间；没有多线程、置换表淘汰和证书 DAG
 共享；根棋盘仍以 Lean 落子数组导出；示例检查为与仓库回归一致而使用 `native_decide`，
 会信任 Lean 原生编译执行路径。核心 soundness 定理本身仍不依赖 C++ 或 `native_decide`，
 但真实大证书在最终可信度和构建成本上仍需单独选择检查执行方式。

@@ -23,8 +23,9 @@ Current modules:
   pruning, an optional target-side width limit, a bounded hash transposition table,
   statistics, and a checked certificate boundary.
 - `cpp/`: an untrusted C++17 iterative DFPN searcher using bitboards, incremental Zobrist
-  hashing, resource limits, and direct export to the unchanged Lean `CompactCertificate`.
-- `Gomoku.Generated`: C++-generated OR/AND smoke certificates that are accepted by the
+  hashing, a bounded VCF move oracle, resource limits, and direct export to the unchanged
+  Lean `CompactCertificate`.
+- `Gomoku.Generated`: C++-generated OR/AND/VCF smoke certificates that are accepted by the
   existing Lean checker and connected to `CanForceWin`.
 - `Gomoku.Examples`: API-level sanity checks, horizontal/diagonal/boundary/overline examples,
   and executable board tests.
@@ -112,9 +113,12 @@ The external `cpp/gomoku_solver` keeps the same proof boundary while moving the 
 search state to flat bitboards and a native transposition table. Its iterative bounded-depth
 DFPN treats target turns as OR nodes and opponent turns as AND nodes. Opponent nodes always
 enumerate every legal move; target-only selective options may miss a proof but cannot make a
-false candidate pass Lean. The exporter writes parent-before-child `CompactCertificate` data,
-not a new certificate representation. `Gomoku.Generated.CppSmoke` checks a two-node immediate
-win and `Gomoku.Generated.CppFork` checks a five-node tree covering both legal opponent replies.
+false candidate pass Lean. A separately budgeted VCF oracle recognizes immediate wins and
+continuous-four lines, then moves its preferred target move to the front of DFPN without
+removing any opponent reply. The exporter writes parent-before-child `CompactCertificate`
+data, not a new certificate representation. `Gomoku.Generated.CppSmoke` checks a two-node
+immediate win, `Gomoku.Generated.CppFork` checks a five-node opponent tree, and
+`Gomoku.Generated.CppVcf` checks a six-node open-four line covering both legal defenses.
 Build and CLI details are in [`cpp/README.md`](cpp/README.md).
 
 Build with:

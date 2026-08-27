@@ -11,6 +11,8 @@ emits a Lean source file containing the same `terminal`, `proverMove`, and
 - incremental deterministic Zobrist hashes plus exact bitboard equality;
 - iterative bounded-depth DFPN over the target-player OR nodes and opponent
   AND nodes;
+- separately bounded VCF probing for immediate wins and continuous-four
+  sequences, used only as target-move guidance for DFPN;
 - immediate-win and forced-defense ordering/pruning at target nodes only;
 - complete legal-move expansion at opponent nodes;
 - separate node, transposition-table, and emitted-certificate limits;
@@ -46,7 +48,8 @@ target black
 ```
 
 `X` is Black, `O` is White, and `.` is empty. The examples directory contains
-an immediate-win OR position and a two-reply opponent AND position.
+an immediate-win OR position, a two-reply opponent AND position, and a
+three-ply open-four VCF position.
 
 ## Generate and check a certificate
 
@@ -64,7 +67,10 @@ lake build Gomoku.Generated.CppSmoke
 Important options:
 
 - `--max-depth`: iterative ply bound from 0 through the board maximum of 225;
+- `--max-vcf-depth`: VCF hint horizon, with `0` disabling the oracle;
 - `--max-nodes`: expanded-node budget, with `0` meaning unlimited;
+- `--max-vcf-nodes`: independent VCF position budget, with `0` meaning
+  unlimited; exhaustion disables the hint but does not stop DFPN;
 - `--max-table-entries`: exact transposition-table bound;
 - `--max-certificate-nodes`: exporter bound, with `0` meaning unlimited;
 - `--max-prover-moves`: optional selective target width; a positive value can
@@ -77,9 +83,19 @@ the trusted proof layer. A `found` result is meaningful after Lean accepts the
 certificate; depth or resource exhaustion is not a proof that the position is
 unwinnable.
 
+The VCF oracle accepts only attacker moves that win immediately or create at
+least one immediate winning point while leaving the defender no immediate
+win. With one winning point it recursively checks the forced block; with two
+or more, one defender stone cannot cover every point. This is a move-ordering
+oracle, not part of the trusted proof: DFPN still builds the full opponent AND
+node, and Lean checks every reply. On `examples/open_four_vcf.txt`, the oracle
+reduces DFPN expansion from 13 nodes to 7; both configurations emit the same
+six-node checked certificate.
+
 ## Known limitations
 
-- no dedicated VCF/VCT threat-space phase yet;
+- no VCT/open-three threat-space search yet; the current oracle covers bounded
+  continuous-four lines only;
 - no parallel search;
 - no table replacement policy after the hard entry limit;
 - no proof-DAG sharing in the exporter;
