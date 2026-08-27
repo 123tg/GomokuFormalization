@@ -234,7 +234,8 @@ s.turn = p ∧ legalMove s m
 1. 把当前逐局面重算的立即胜着/强制防守分组升级为增量威胁缓存；
 2. 为已有硬条目上限的哈希置换表增加替换/淘汰策略，并让生成证书共享重复子树；
 3. 增量维护空点数和终局信息；
-4. 将大规模搜索移到外部程序，只把生成的 Lean `CompactCertificate` 导入可信侧。
+4. 在现有 C++ DFPN 原型上加入 VCF/VCT、并行和更大局面基准，只把生成的 Lean
+   `CompactCertificate` 导入可信侧。
 
 快速终局路径本身不改变可信边界：搜索器可用 `createsFiveFast` 排序或剪枝，但导入的
 证书仍由 `checkNodeAt`/`checkCertificate` 重新计算并验证。后续若加入增量缓存，必须为
@@ -253,6 +254,25 @@ s.turn = p ∧ legalMove s m
 完整枚举合法应手。一步成五直接构造终局叶子，最终仍由同一检查器复核。选择性宽度可能
 漏解，所以受限搜索的 `notFound` 不是不可胜证明。剩余性能问题是局面与终局/威胁信息尚未
 增量维护、证书树尚未做 DAG 共享，以及完整 15×15 搜索规模仍远超常规构建测试。
+
+### A9：C++ 搜索器与当前证书格式（新增）
+
+`cpp/gomoku_solver` 已建立外部搜索原型，但没有修改 `CompactCertificate` 或可信检查器。
+C++ 使用双方 bitboard、增量 Zobrist 哈希和迭代深度 DFPN；置换表键同时保留完整双方
+bitboard、轮次、目标方和剩余深度，所以 Zobrist 碰撞只影响哈希桶，不会把不同局面合并。
+节点预算、置换表容量和证书节点容量分别产生独立状态。目标方可做强制着法剪枝和选择性
+宽度限制；对手节点不使用宽度剪枝，输出的 `opponentMoves` 仍列出全部合法应手。
+
+搜索器、C++ 规则实现和导出器全部是不可信组件。当前回归让 C++ 分别生成两节点立即胜
+证书和五节点对手全应手证书；`Gomoku.Generated.CppSmoke` 与
+`Gomoku.Generated.CppFork` 随后调用未改动的 `checkLocalCertificateAt`，并仅通过
+`local_certificate_at_sound` 得到 `CanForceWin`。因此错误坐标、错误轮次、遗漏应手、
+错误子局面或错误终局仍会被 Lean 拒绝。
+
+当前不足包括：DFPN 尚未叠加专用 VCF/VCT 搜索；没有多线程、置换表淘汰和证书 DAG
+共享；根棋盘仍以 Lean 落子数组导出；示例检查为与仓库回归一致而使用 `native_decide`，
+会信任 Lean 原生编译执行路径。核心 soundness 定理本身仍不依赖 C++ 或 `native_decide`，
+但真实大证书在最终可信度和构建成本上仍需单独选择检查执行方式。
 
 ## 审计完成标准
 

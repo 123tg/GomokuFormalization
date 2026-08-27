@@ -22,6 +22,10 @@ Current modules:
 - `Gomoku.Engine`: a budgeted, iterative-deepening AND/OR searcher with forced tactical
   pruning, an optional target-side width limit, a bounded hash transposition table,
   statistics, and a checked certificate boundary.
+- `cpp/`: an untrusted C++17 iterative DFPN searcher using bitboards, incremental Zobrist
+  hashing, resource limits, and direct export to the unchanged Lean `CompactCertificate`.
+- `Gomoku.Generated`: C++-generated OR/AND smoke certificates that are accepted by the
+  existing Lean checker and connected to `CanForceWin`.
 - `Gomoku.Examples`: API-level sanity checks, horizontal/diagonal/boundary/overline examples,
   and executable board tests.
 - `Gomoku.Adversarial`: executable counterexamples and regression checks from the semantic audit.
@@ -104,8 +108,24 @@ reports skipped stores. A positive width limit may miss a win, but cannot certif
 `runCheckedEngine` recompiles a found tree and accepts it only after
 `checkLocalCertificateAt`; `runCheckedEngine_sound` is the theorem-facing boundary.
 
+The external `cpp/gomoku_solver` keeps the same proof boundary while moving the expensive
+search state to flat bitboards and a native transposition table. Its iterative bounded-depth
+DFPN treats target turns as OR nodes and opponent turns as AND nodes. Opponent nodes always
+enumerate every legal move; target-only selective options may miss a proof but cannot make a
+false candidate pass Lean. The exporter writes parent-before-child `CompactCertificate` data,
+not a new certificate representation. `Gomoku.Generated.CppSmoke` checks a two-node immediate
+win and `Gomoku.Generated.CppFork` checks a five-node tree covering both legal opponent replies.
+Build and CLI details are in [`cpp/README.md`](cpp/README.md).
+
 Build with:
 
 ```text
 lake build
+```
+
+Build and run the C++ regressions on Windows with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\cpp\build.ps1 -Clean
+.\cpp\build\gomoku_tests.exe
 ```

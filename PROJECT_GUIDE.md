@@ -101,15 +101,25 @@ theorem initial_black_wins :
   `notFound` 只表示当前配置没有找到证明。一步成五分支直接生成终局叶子，省去一次递归访问。
   `runCheckedEngine` 只返回通过 `checkLocalCertificateAt` 的证书，
   `runCheckedEngine_sound` 将任何被接受结果连接到 `CanForceWin`。
+  同一阶段现已增加独立的 `cpp/gomoku_solver` 原型：它以双方各四个 `uint64_t` bitboard
+  保存棋盘，增量维护确定性 Zobrist 哈希，使用精确 bitboard 相等性消除哈希碰撞风险，
+  并执行迭代深度 DFPN。目标方是 OR 节点，对手方是 AND 节点；目标方可使用立即胜着/
+  强制防守剪枝和可选宽度限制，对手节点始终生成全部合法着法。C++ 输出仍是现有
+  `CompactCertificate`，没有修改证书表示，也不通过 FFI 进入可信基础。
+  `Gomoku.Generated.CppSmoke` 和 `Gomoku.Generated.CppFork` 分别检查 C++ 生成的两节点
+  立即胜证书和五节点全应手证书，并由 `local_certificate_at_sound` 得到 `CanForceWin`。
   `Gomoku/Adversarial.lean` 还用一个固定的五节点双威胁候选树回归测试了
   `CandidateTree -> CompactCertificate -> checkLocalCertificateAt -> CanForceWin`
   的完整链路；该测试覆盖对手节点的全部两个合法应手。真实 15×15 策略证书尚未导入，
   因此 `initial_black_wins` 仍未声明。
 
-最近一次验证：第二轮 `Gomoku.Engine` 优化后，`lake build Gomoku.Engine` 通过（8713 jobs），
-`lake build` 全工程通过（8717 jobs）。预算、选择性分支、强制防守、
-缓存上限和证书回归均通过。构建输出中的 linter 警告（文件头注释、
-测试模块使用 `native_decide`）不等同于 Lean 类型检查失败；核心 soundness 定理仍不
+最近一次验证：C++17 版本已用 GCC 10.3 在 `-O3 -DNDEBUG` 下构建，
+`gomoku_tests.exe` 的几何、解析、OR/AND 证明和三类资源上限回归全部通过；立即胜和
+对手全应手示例分别生成 2 节点与 5 节点证书。`lake build Gomoku.Generated.CppSmoke`
+和 `lake build Gomoku.Generated.CppFork` 均通过（各 8712 jobs），`lake build` 全工程通过
+（8719 jobs）。预算、选择性分支、强制防守、缓存上限和证书回归均通过。构建输出中的
+linter 警告（文件头注释、测试模块使用 `native_decide`）不等同于 Lean 类型检查失败；
+核心 soundness 定理仍不
 依赖 `native_decide`。固定候选树回归已在单独构建中通过；在把终局检查提到棋盘级别后，
 两空点局面的 `checkedDepthCertificateFor 2` smoke test 也已通过。快速成五判定的四方向
 和边界回归，以及它和完整 `terminal` 的合法着法等价性也已通过。更深或更宽的搜索仍会
@@ -209,6 +219,8 @@ Fin 15 只允许 0 到 14，因此坐标不会越界。
 | Gomoku/Certificate.lean | 依赖类型策略树和紧凑证书检查器 |
 | Gomoku/Search.lean | 候选生成、基础有限深度搜索和候选证书编译 |
 | Gomoku/Engine.lean | 哈希置换表、节点预算、迭代加深和受检搜索入口 |
+| cpp/ | C++17 bitboard/DFPN 搜索器、命令行接口、测试和 Lean 源码导出器 |
+| Gomoku/Generated/*.lean | C++ 生成并由现有检查器接受的局部回归证书 |
 | Gomoku/Examples.lean | 构造局面、正反例和 API 测试 |
 | Gomoku/Adversarial.lean | 对抗性反例、语义审计和证书拒绝测试 |
 | Gomoku.lean | 统一导入所有模块 |
@@ -656,6 +668,8 @@ checkCertificate c = true
 - [x] 目标方立即胜着/强制防守剪枝、可选分支宽度和一步成五短路。
 - [x] 置换表条目硬上限及饱和写入统计（尚无替换/淘汰策略）。
 - [x] 搜索引擎候选树重新通过局部证书检查，并给出 `runCheckedEngine_sound`。
+- [x] C++17 bitboard/DFPN 外部搜索器原型及不改变 `CompactCertificate` 的 Lean 导出器。
+- [x] C++ OR/AND 两类生成证书通过 `checkLocalCertificateAt` 和 soundness 回归。
 - [x] 非终局合法着法存在性与默认合法策略接口。
 - [x] CertificateTree 与 CanForceWin 的双向等价接口。
 - [ ] 对称性压缩的独立正确性证明。
@@ -774,8 +788,8 @@ theorem compact_certificate_sound
 
 目标：让搜索器生成候选证书，但不把搜索器本身作为可信基础。
 
-当前已提供 `Gomoku.Search` 适配层和最小可执行搜索原语，但尚未实现完整的 15×15
-策略搜索。现有原语包括：
+当前已提供 `Gomoku.Search` 适配层、最小可执行搜索原语和 C++ DFPN 原型，但尚未实现
+完整的 15×15 策略搜索。Lean 侧现有原语包括：
 
 - `coordAtIndex`/`allCoords`：用 `Fin 225` 构造完整棋盘坐标，避免依赖
   `Finset.toList` 的不可执行路径。
@@ -879,6 +893,21 @@ soundness 的选择性搜索开关。搜索器的 `found` 只有通过证书检�
 只返回两个强制防守点，而未剪枝的对手候选仍有 221 个。置换表上限为 1 时保持 1 个条目并
 记录 1 次跳过写入；复用首次运行的置换表后可用 0 个新节点、2 次缓存命中返回结果。
 这些测试验证控制流、剪枝和缓存行为，不等同于完整开局求解。
+
+外部搜索器位于 `cpp/`。位置文件明确给出 `turn`、`target` 和按 `y = 0..14` 排列的
+15 行棋盘，使用 `X`/`O`/`.` 表示黑/白/空。第一版算法和接口为：
+
+1. 双方各用四个 64 位字保存 225 个棋盘点，落子时增量更新 Zobrist 哈希；
+2. 置换表键仍保存完整双方 bitboard、轮次、目标方和剩余深度，哈希只影响桶选择；
+3. 迭代深度 DFPN 使用 proof/disproof number 引导 AND/OR 展开；
+4. 节点数、置换表条目数和输出证书节点数分别设限，并报告不同退出状态；
+5. 输出器把根棋盘写成落子数组，把每个后继位置写成前一位置的 `play`，最后生成现有
+   `terminal`/`proverMove`/`opponentMoves` 节点和 Lean 检查定理。
+
+构建、输入格式和命令行参数见 `cpp/README.md`。当前 C++ 单元测试覆盖成五几何、位置解析、
+两节点 OR 证书、五节点 AND 证书以及节点/置换表/证书三类资源上限。尚未加入专用 VCF/VCT
+阶段、并行搜索、置换表替换策略和证书 DAG 共享；因此这是可验证接口和性能数据结构原型，
+还不是完整开局求解器。C++ 的 `depthLimit` 或资源上限只表示没有找到证明，不能推出不可胜。
 
 ### 阶段 F：导入证书并证明最终定理
 
