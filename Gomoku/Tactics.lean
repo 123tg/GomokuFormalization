@@ -3,24 +3,29 @@ import Gomoku.Game
 namespace Gomoku
 
 abbrev PatternWitness := Coord × Direction
+-- 用起点坐标和方向组成棋形见证。
 
 def openThreeWitnesses (b : Board) (p : Player) : Finset PatternWitness :=
   ((Finset.univ : Finset Coord).product directions).filter
     (fun w => normalizedStraightOpenThree b p w.1 w.2)
+-- 穷举并收集棋盘上玩家 p 的全部规范化直线活三见证。
 
 def openFourWitnesses (b : Board) (p : Player) : Finset PatternWitness :=
   ((Finset.univ : Finset Coord).product directions).filter
     (fun w => normalizedStraightOpenFour b p w.1 w.2)
+-- 穷举并收集棋盘上玩家 p 的全部规范化直线活四见证。
 
 theorem mem_openThreeWitnesses (b : Board) (p : Player) (c : Coord) (d : Direction) :
     (c, d) ∈ openThreeWitnesses b p ↔ straightOpenThree b p c d := by
   classical
   cases d <;> simp [openThreeWitnesses, directions, normalizedStraightOpenThree_iff]
+-- 刻画活三见证集合的成员条件，它恰好等价于相应起点和方向上的直线活三。
 
 theorem mem_openFourWitnesses (b : Board) (p : Player) (c : Coord) (d : Direction) :
     (c, d) ∈ openFourWitnesses b p ↔ straightOpenFour b p c d := by
   classical
   cases d <;> simp [openFourWitnesses, directions, normalizedStraightOpenFour_iff]
+-- 刻画活四见证集合的成员条件，它恰好等价于相应起点和方向上的直线活四。
 
 theorem card_ge_two_iff_exists_distinct {α : Type} [DecidableEq α] (s : Finset α) :
     2 ≤ s.card ↔ ∃ a ∈ s, ∃ b ∈ s, a ≠ b := by
@@ -31,27 +36,33 @@ theorem card_ge_two_iff_exists_distinct {α : Type} [DecidableEq α] (s : Finset
   · intro h
     have h' : 1 < s.card := Finset.one_lt_card.mpr h
     omega
+-- 说明有限集合至少有两个元素，当且仅当其中存在两个互不相同的成员。
 
 def WinningMoves (s : Position) (p : Player) : Finset Coord :=
   (Finset.univ : Finset Coord).filter
     (fun c => s.turn = p ∧ legalMove s c ∧
       terminal (play s c) = some (winner p))
+-- 收集轮到玩家 p 时所有合法且能一步结束为 p 获胜的着法。
 
 def HasImmediateWin (s : Position) (p : Player) : Prop :=
   (WinningMoves s p).Nonempty
+-- 表示玩家 p 在当前局面至少拥有一个立即获胜着法。
 
 instance hasImmediateWinDecidable (s : Position) (p : Player) :
     Decidable (HasImmediateWin s p) := by
   unfold HasImmediateWin
   infer_instance
+-- 说明立即获胜着法是否存在可以判定。
 
 def OpponentHasImmediateWin (s : Position) (p : Player) : Prop :=
   HasImmediateWin s (Player.other p)
+-- 表示玩家 p 的对手在当前局面拥有立即获胜着法。
 
 instance opponentHasImmediateWinDecidable (s : Position) (p : Player) :
     Decidable (OpponentHasImmediateWin s p) := by
   unfold OpponentHasImmediateWin
   infer_instance
+-- 说明对手是否拥有立即获胜着法可以判定。
 
 /- `WinningCells` is independent of whose turn it is.  This is needed for a
    double threat: after Black creates two winning points, it is White's turn,
@@ -61,25 +72,30 @@ def WinningCells (s : Position) (p : Player) : Finset Coord :=
   (Finset.univ : Finset Coord).filter
     (fun c => s.board.cell c = .empty ∧
       hasAtLeastFive (s.board.place c p) p)
+-- 收集所有几何制胜点，不要求当前轮到 p，因此可用于对手回合中的威胁分析。
 
 def HasDoubleThreat (s : Position) (p : Player) : Prop :=
   2 ≤ (WinningCells s p).card
+-- 表示玩家 p 至少有两个不同的几何制胜点。
 
 instance winningCellsDecidable (s : Position) (p : Player) :
     DecidablePred (fun c => c ∈ WinningCells s p) := by
   intro c
   simp only [WinningCells]
   infer_instance
+-- 为“坐标属于制胜点集合”提供可判定谓词实例。
 
 instance hasDoubleThreatDecidable (s : Position) (p : Player) :
     Decidable (HasDoubleThreat s p) := by
   unfold HasDoubleThreat
   infer_instance
+-- 说明双威胁条件可以通过有限制胜点集合判定。
 
 theorem mem_winningCells_iff (s : Position) (p : Player) (c : Coord) :
     c ∈ WinningCells s p ↔
       s.board.cell c = .empty ∧ hasAtLeastFive (s.board.place c p) p := by
   simp [WinningCells]
+-- 展开制胜点集合成员资格：该点为空且假设放入 p 的棋子后形成五连。
 
 /- A straight open three is a one-ply threat to create a four, not an
    immediate five.  Keeping this set separate from `WinningCells` prevents
@@ -87,11 +103,13 @@ theorem mem_winningCells_iff (s : Position) (p : Player) (c : Coord) :
 def FourExtensionCells (b : Board) (p : Player) : Finset Coord :=
   (Finset.univ : Finset Coord).filter
     (fun m => b.cell m = .empty ∧ hasRun (b.place m p) p 4)
+-- 收集玩家 p 落子后能形成四连的全部空坐标，用于区分四威胁与立即五连。
 
 theorem mem_fourExtensionCells_iff (b : Board) (p : Player) (m : Coord) :
     m ∈ FourExtensionCells b p ↔
       b.cell m = .empty ∧ hasRun (b.place m p) p 4 := by
   simp [FourExtensionCells]
+-- 刻画四连扩展点的集合成员条件。
 
 theorem straightOpenThree_has_fourExtension
     {b : Board} {p : Player} {c : Coord} {d : Direction}
@@ -135,18 +153,21 @@ theorem straightOpenThree_has_fourExtension
   · refine ⟨m, ?_, ?_⟩
     · simpa using hmstep
     · exact Board.place_same _ _ _
+-- 证明直线活三至少有一个空端点可落子形成四连。
 
 def OpenFourExtensionCells (b : Board) (p : Player) (c : Coord) (d : Direction) :
     Finset Coord :=
   (Finset.univ : Finset Coord).filter
     (fun m => b.cell m = .empty ∧
       straightOpenFour (b.place m p) p c d)
+-- 收集能把指定起点和方向上的棋形扩展为直线活四的空坐标。
 
 theorem mem_openFourExtensionCells_iff
     (b : Board) (p : Player) (c : Coord) (d : Direction) (m : Coord) :
     m ∈ OpenFourExtensionCells b p c d ↔
       b.cell m = .empty ∧ straightOpenFour (b.place m p) p c d := by
   simp [OpenFourExtensionCells]
+-- 刻画指定直线活四扩展点集合的成员条件。
 
 theorem straightOpenFour_has_winningCell
     {b : Board} {p : Player} {c : Coord} {d : Direction}
@@ -198,6 +219,7 @@ theorem straightOpenFour_has_winningCell
       (b.place m p).cell q = b.cell q := Board.place_other b hqm p
       _ = .stone p := hqcell
   · exact ⟨m, by simpa using hmstep, Board.place_same _ _ _⟩
+-- 证明直线活四至少有一个端点是下一手即可成五的制胜点。
 
 theorem openFourExtension_has_winningCell
     {b : Board} {p : Player} {c : Coord} {d : Direction} {m : Coord}
@@ -206,6 +228,7 @@ theorem openFourExtension_has_winningCell
   have hm' := (mem_openFourExtensionCells_iff b p c d m).mp hm
   rcases straightOpenFour_has_winningCell hm'.2 with ⟨w, hw⟩
   exact ⟨w, hw⟩
+-- 说明完成一次活四扩展后，所得局面至少保留一个立即成五的制胜点。
 
 theorem brokenOpenThree_has_fourExtension
     {b : Board} {p : Player} {c : Coord} {d : Direction}
@@ -227,6 +250,7 @@ theorem brokenOpenThree_has_fourExtension
       calc
         (b.place m p).cell q = b.cell q := Board.place_other b hqm p
         _ = .stone p := hqcell
+-- 分别填补两种断三模式的内部缺口，证明断三至少能扩展成一个四连。
     · rcases h1 with ⟨q, hqstep, hqcell⟩
       have hqm : q ≠ m := by
         intro hqm
@@ -287,11 +311,13 @@ theorem brokenOpenThree_has_fourExtension
 
 def HasDoubleFourThreat (s : Position) (p : Player) : Prop :=
   2 ≤ (FourExtensionCells s.board p).card
+-- 表示玩家 p 至少有两个不同的四连扩展点。
 
 instance hasDoubleFourThreatDecidable (s : Position) (p : Player) :
     Decidable (HasDoubleFourThreat s p) := by
   unfold HasDoubleFourThreat
   infer_instance
+-- 说明双四威胁可以通过有限扩展点集合判定。
 
 theorem hasDoubleFourThreat_iff_exists_distinct
     (s : Position) (p : Player) :
@@ -300,6 +326,7 @@ theorem hasDoubleFourThreat_iff_exists_distinct
         ∃ m₂ ∈ FourExtensionCells s.board p, m₁ ≠ m₂ := by
   unfold HasDoubleFourThreat
   exact card_ge_two_iff_exists_distinct _
+-- 把双四威胁的基数定义改写为存在两个不同四连扩展点。
 
 theorem hasAtLeastFive_place_preserves_empty_other
     {b : Board} {p q : Player} {c r : Coord}
@@ -322,6 +349,7 @@ theorem hasAtLeastFive_place_preserves_empty_other
     ((b.place c p).place r q).cell x = (b.place c p).cell x :=
       Board.place_other (b.place c p) hxr q
     _ = .stone p := hxcell
+-- 说明在不同的原空点放置任意棋子，不会破坏已经由 p 在另一点形成的五连。
 
 /- A single defensive move can occupy at most one coordinate.  Therefore a
    position with two distinct immediate winning cells always retains one
@@ -341,6 +369,7 @@ theorem winningCell_ne_of_hasDoubleThreat
     apply hab
     exact hra.symm.trans hba.symm
   · exact ⟨a, ha, fun har => hra har.symm⟩
+-- 说明面对任意单个防守坐标，双威胁中总能选出另一个未被占用的制胜点。
 
 theorem terminal_none_after_doubleThreat
     {s : Position} {p : Player} {r : Coord}
@@ -397,6 +426,7 @@ theorem terminal_none_after_doubleThreat
       have hblack : ¬ hasAtLeastFive (play s r).board .black := by
         simpa using hoppnone
       simp [htargetnone, hblack, hnotfull]
+-- 证明在无对手立即胜的双威胁局面中，对手任一合法防守后仍为非终局。
 
 theorem doubleThreat_forces_win
     {s : Position} {p : Player}
@@ -455,6 +485,7 @@ theorem doubleThreat_forces_win
           simpa using hnoopp_after
         simp [terminal, Position.terminal, hfive, hblack, winner]
   exact canForceWin_immediate hmlegal hwin hturnAfter
+-- 证明双制胜点可强制获胜：对手一手至多封住一点，目标方随后在另一点立即成五。
 
 /- A move-level wrapper for the semantic double-threat theorem.  The
    post-move position is deliberately required to be non-terminal and to
@@ -476,35 +507,44 @@ theorem doubleThreat_move_forces_win
     doubleThreat_forces_win
       (s := play s m) (p := p) hchildturn hchildterm hnoopp hthreat
   exact ForceWin.choose hterm hturn m hlegal hchild
+-- 把子局面的双威胁结论提升到落子前局面，构造己方选择节点及其获胜子树。
 
 def ForcesWinAfter (s : Position) (p : Player) (m : Coord) : Prop :=
   s.turn = p ∧ legalMove s m ∧ CanForceWin (play s m) p
+-- 表示轮到 p 时，着法 m 合法且落子后的局面可由 p 强制获胜。
 
 def GeometricDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop :=
   let after := play s m
   2 ≤ (openThreeWitnesses after.board p).card
+-- 仅从落子后的棋盘几何判断是否出现至少两个不同的直线活三见证。
 
 def GeometricMoveCreatesSingleOpenFour (s : Position) (p : Player) (m : Coord) : Prop :=
   let after := play s m
   (openFourWitnesses after.board p).card = 1
+-- 仅从落子后棋盘判断是否恰好形成一个直线活四见证。
 
 def DoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop :=
   s.turn = p ∧ legalMove s m ∧ GeometricDoubleOpenThree s p m
+-- 在几何双活三之外加入轮次和合法性，得到可用于游戏语义的落子谓词。
 
 def GeometricBrokenOpenThree (s : Position) (p : Player) (m : Coord) : Prop :=
   ∃ c d, brokenOpenThree s.board p c d ∧
     m ∈ OpenFourExtensionCells s.board p c d
+-- 表示 m 是某个断三棋形的扩展点，落子后会形成对应方向的直线活四。
 
 def BrokenOpenThreeMove (s : Position) (p : Player) (m : Coord) : Prop :=
   s.turn = p ∧ legalMove s m ∧ GeometricBrokenOpenThree s p m
+-- 在断三几何扩展条件之外加入正确轮次和合法落子要求。
 
 def MoveCreatesSingleOpenFour (s : Position) (p : Player) (m : Coord) : Prop :=
   s.turn = p ∧ legalMove s m ∧ GeometricMoveCreatesSingleOpenFour s p m
+-- 表示玩家 p 的合法着法 m 恰好创造一个直线活四见证。
 
 instance geometricDoubleOpenThreeDecidable (s : Position) (p : Player) (m : Coord) :
     Decidable (GeometricDoubleOpenThree s p m) := by
   unfold GeometricDoubleOpenThree
   infer_instance
+-- 说明落子后的几何双活三条件可以判定。
 
 theorem geometricDoubleOpenThree_iff (s : Position) (p : Player) (m : Coord) :
     GeometricDoubleOpenThree s p m ↔
@@ -512,41 +552,50 @@ theorem geometricDoubleOpenThree_iff (s : Position) (p : Player) (m : Coord) :
         ∃ w₂ ∈ openThreeWitnesses (play s m).board p, w₁ ≠ w₂ := by
   unfold GeometricDoubleOpenThree
   exact card_ge_two_iff_exists_distinct _
+-- 把几何双活三的基数条件改写为存在两个不同活三见证。
 
 instance geometricMoveCreatesSingleOpenFourDecidable (s : Position) (p : Player) (m : Coord) :
     Decidable (GeometricMoveCreatesSingleOpenFour s p m) := by
   unfold GeometricMoveCreatesSingleOpenFour
   infer_instance
+-- 说明落子后恰有一个几何活四见证的条件可以判定。
 
 instance doubleOpenThreeDecidable (s : Position) (p : Player) (m : Coord) :
     Decidable (DoubleOpenThree s p m) := by
   unfold DoubleOpenThree
   infer_instance
+-- 说明带轮次和合法性约束的双活三落子谓词可以判定。
 
 instance geometricBrokenOpenThreeDecidable (s : Position) (p : Player) (m : Coord) :
     Decidable (GeometricBrokenOpenThree s p m) := by
   unfold GeometricBrokenOpenThree
   infer_instance
+-- 说明指定落子是否为某个断三的几何扩展点可以判定。
 
 instance brokenOpenThreeMoveDecidable (s : Position) (p : Player) (m : Coord) :
     Decidable (BrokenOpenThreeMove s p m) := by
   unfold BrokenOpenThreeMove
   infer_instance
+-- 说明带游戏条件的断三扩展着法谓词可以判定。
 
 instance moveCreatesSingleOpenFourDecidable (s : Position) (p : Player) (m : Coord) :
     Decidable (MoveCreatesSingleOpenFour s p m) := by
   unfold MoveCreatesSingleOpenFour
   infer_instance
+-- 说明合法着法是否恰好创造一个活四可以判定。
 
 def SingleOpenFour (s : Position) (p : Player) : Prop :=
   (openFourWitnesses s.board p).card = 1
+-- 表示当前棋盘上玩家 p 恰好有一个规范化直线活四见证。
 
 instance singleOpenFourDecidable (s : Position) (p : Player) :
     Decidable (SingleOpenFour s p) := by
   unfold SingleOpenFour
   infer_instance
+-- 说明单活四位置条件可以通过有限见证集合判定。
 
 abbrev SingleOpenFourPosition := SingleOpenFour
+-- 为单活四谓词提供强调“局面”含义的兼容别名。
 
 /- `SafeDoubleOpenThree` records the semantic (multi-ply) safety condition:
    after the first move, every legal opponent reply still leaves the target
@@ -559,6 +608,7 @@ def SafeDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop :=
     ¬ OpponentHasImmediateWin (play s m) p ∧
     ∀ r, legalMove (play s m) r →
       CanForceWin (play (play s m) r) p
+-- 定义语义安全的双活三：排除对手立即胜，且每个合法防守后的局面仍可强制获胜。
 
 def SafeBrokenOpenThree (s : Position) (p : Player) (m : Coord) : Prop :=
   BrokenOpenThreeMove s p m ∧
@@ -566,6 +616,7 @@ def SafeBrokenOpenThree (s : Position) (p : Player) (m : Coord) : Prop :=
     ¬ OpponentHasImmediateWin (play s m) p ∧
     ∀ r, legalMove (play s m) r →
       CanForceWin (play (play s m) r) p
+-- 定义语义安全的断三扩展：落子后非终局、对手无立即胜且全部防守后仍可获胜。
 
 def ImmediateSafeBrokenOpenThree (s : Position) (p : Player) (m : Coord) : Prop :=
   BrokenOpenThreeMove s p m ∧
@@ -573,11 +624,13 @@ def ImmediateSafeBrokenOpenThree (s : Position) (p : Player) (m : Coord) : Prop 
     ¬ OpponentHasImmediateWin (play s m) p ∧
     ∀ r, legalMove (play s m) r →
       HasImmediateWin (play (play s m) r) p
+-- 定义更强的立即安全断三：每个对手防守后目标方都已有一步胜着。
 
 instance immediateSafeBrokenOpenThreeDecidable (s : Position) (p : Player) (m : Coord) :
     Decidable (ImmediateSafeBrokenOpenThree s p m) := by
   unfold ImmediateSafeBrokenOpenThree
   infer_instance
+-- 说明立即安全断三只含有限可执行条件，因此可以判定。
 
 def ImmediateSafeDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop :=
   DoubleOpenThree s p m ∧
@@ -585,6 +638,7 @@ def ImmediateSafeDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop 
     ¬ OpponentHasImmediateWin (play s m) p ∧
     ∀ r, legalMove (play s m) r →
       HasImmediateWin (play (play s m) r) p
+-- 定义更强的立即安全双活三：每个合法防守后目标方都可一步获胜。
 
 theorem not_safeDoubleOpenThree_of_opponentImmediate
     {s : Position} {p : Player} {m : Coord}
@@ -592,6 +646,7 @@ theorem not_safeDoubleOpenThree_of_opponentImmediate
     ¬ SafeDoubleOpenThree s p m := by
   intro hsafe
   exact hsafe.2.2.1 hopp
+-- 说明若对手在首步后已有立即胜着，则该双活三不满足安全条件。
 
 theorem not_immediateSafeDoubleOpenThree_of_opponentImmediate
     {s : Position} {p : Player} {m : Coord}
@@ -599,6 +654,7 @@ theorem not_immediateSafeDoubleOpenThree_of_opponentImmediate
     ¬ ImmediateSafeDoubleOpenThree s p m := by
   intro hsafe
   exact hsafe.2.2.1 hopp
+-- 说明对手存在立即胜着时，更强的立即安全双活三同样不可能成立。
 
 theorem brokenOpenThreeMove_creates_winningCell
     {s : Position} {p : Player} {m : Coord}
@@ -610,6 +666,7 @@ theorem brokenOpenThreeMove_creates_winningCell
     ⟨s.board.place m s.turn, s.turn.other⟩ p
   rw [hturn]
   exact hw
+-- 证明合法断三扩展着法会在落子后的局面产生至少一个几何制胜点。
 
 theorem immediateWin_canForceWin {s : Position} {p : Player}
     (h : HasImmediateWin s p) : CanForceWin s p := by
@@ -620,6 +677,7 @@ theorem immediateWin_canForceWin {s : Position} {p : Player}
     simpa [WinningMoves] using hm
   rcases hm' with ⟨hturn, hlegal, hwin⟩
   exact canForceWin_immediate hlegal hwin hturn
+-- 把 HasImmediateWin 的有限集合见证转换为游戏语义上的 CanForceWin。
 
 /- Fill a single gap in a five-cell line.  The helper is intentionally
    geometric: callers must provide the turn and non-terminal premises before
@@ -663,6 +721,7 @@ theorem fillGapFive_black_immediate
   refine ⟨m, hlegal, ?_⟩
   change Position.terminal (play s m) = some .blackWin
   simp [Position.terminal, hrun]
+-- 证明黑方填入五格线中的唯一空缺后形成五连，从而得到合法的一步胜着。
 
 theorem jumpFour_black_immediate
     {s : Position} {c : Coord} {d : Direction}
@@ -703,6 +762,7 @@ theorem jumpFour_black_immediate
     · exact h2
     · exact h3
     · exact h4
+-- 对跳四的三种内部缺口分别应用填缺定理，得到黑方的一步胜着。
 
 theorem straightOpenFour_black_immediate
     {s : Position} {c : Coord} {d : Direction}
@@ -746,6 +806,7 @@ theorem straightOpenFour_black_immediate
   refine ⟨m, hlegal, ?_⟩
   change Position.terminal (play s m) = some .blackWin
   simp [Position.terminal, hrun]
+-- 证明黑方直线活四可在开放右端补成五连，因此存在合法立即胜着。
 
 set_option maxRecDepth 100000 in
 theorem singleOpenFourPosition_forces_win
@@ -763,12 +824,14 @@ theorem singleOpenFourPosition_forces_win
   rcases straightOpenFour_black_immediate hturn hnoterm hstraight with
     ⟨m, hm, hwin⟩
   exact canForceWin_immediate hm hwin hturn
+-- 从唯一活四见证提取直线活四及其立即胜着，证明黑方可以强制获胜。
 
 theorem singleOpenFour_forces_win_minimal {s : Position}
     (hturn : s.turn = .black) (hnoterm : ¬ IsTerminal s)
     (hpattern : SingleOpenFour s .black) :
     CanForceWin s .black :=
   singleOpenFourPosition_forces_win hturn hnoterm hpattern
+-- 给出单活四强制获胜定理的最小前提版本。
 
 theorem singleOpenFour_forces_win {s : Position}
     (hturn : s.turn = .black) (hnoterm : ¬ IsTerminal s)
@@ -777,10 +840,12 @@ theorem singleOpenFour_forces_win {s : Position}
   CanForceWin s .black := by
   have _ := hnoWhite
   exact singleOpenFour_forces_win_minimal hturn hnoterm hpattern
+-- 保留带“白方无立即胜”参数的兼容接口；核心证明实际只需黑方单活四。
 
 theorem opponent_no_immediate_win_of_not
     {s : Position} {p : Player} (h : ¬ OpponentHasImmediateWin s p) :
     ¬ HasImmediateWin s (Player.other p) := h
+-- 展开 OpponentHasImmediateWin 别名，直接得到对手没有立即胜着的命题。
 
 theorem safeDoubleOpenThree_forces_win {s : Position} {p : Player} {m : Coord}
     (hsafe : SafeDoubleOpenThree s p m) :
@@ -796,6 +861,7 @@ theorem safeDoubleOpenThree_forces_win {s : Position} {p : Player} {m : Coord}
   have _ := hnoopp
   exact ForceWin.choose hterm hturn m hlegal
     (ForceWin.respond hchildterm hchildturn hdefenses)
+-- 按安全双活三定义直接构造己方选择节点和覆盖全部防守的对手响应节点。
 
 theorem safeBrokenOpenThree_forces_win {s : Position} {p : Player} {m : Coord}
     (hsafe : SafeBrokenOpenThree s p m) :
@@ -811,6 +877,7 @@ theorem safeBrokenOpenThree_forces_win {s : Position} {p : Player} {m : Coord}
   have _ := hnoopp
   exact ForceWin.choose hterm hturn m hlegal
     (ForceWin.respond hchildterm hchildturn hdefenses)
+-- 按安全断三定义构造完整两层 ForceWin 树，从而得到 CanForceWin。
 
 theorem immediateSafeBrokenOpenThree_implies_safe
     {s : Position} {p : Player} {m : Coord}
@@ -820,6 +887,7 @@ theorem immediateSafeBrokenOpenThree_implies_safe
   refine ⟨hmove, hchildterm, hnoopp, ?_⟩
   intro r hr
   exact immediateWin_canForceWin (hdefenses r hr)
+-- 把每个防守后的立即胜着逐一提升为 CanForceWin，证明立即安全断三蕴含语义安全断三。
 
 theorem immediateSafeBrokenOpenThree_forces_win
     {s : Position} {p : Player} {m : Coord}
@@ -827,6 +895,7 @@ theorem immediateSafeBrokenOpenThree_forces_win
     CanForceWin s p :=
   safeBrokenOpenThree_forces_win
     (immediateSafeBrokenOpenThree_implies_safe hstrong)
+-- 由“立即安全蕴含安全”和安全断三获胜定理推出立即安全断三可强制获胜。
 
 theorem immediateSafeDoubleOpenThree_implies_safe
     {s : Position} {p : Player} {m : Coord}
@@ -836,6 +905,7 @@ theorem immediateSafeDoubleOpenThree_implies_safe
   refine ⟨hdouble, hchildterm, hnoopp, ?_⟩
   intro r hr
   exact immediateWin_canForceWin (hdefenses r hr)
+-- 把每个防守后的立即胜着提升为 CanForceWin，证明立即安全双活三蕴含语义安全双活三。
 
 theorem immediateSafeDoubleOpenThree_forces_win
     {s : Position} {p : Player} {m : Coord}
@@ -843,5 +913,6 @@ theorem immediateSafeDoubleOpenThree_forces_win
     CanForceWin s p :=
   safeDoubleOpenThree_forces_win
     (immediateSafeDoubleOpenThree_implies_safe hstrong)
+-- 由安全性桥接定理推出立即安全双活三可以强制获胜。
 
 end Gomoku
