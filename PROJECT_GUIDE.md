@@ -78,8 +78,10 @@ theorem initial_black_wins :
   `boardKey_eq_iff`/`positionKey_eq_iff` 和 `containsPositionKey`。`SearchMemo`/`SearchKey`
   适配层的键同时记录剩余深度、目标方和完整局面；基础递归搜索已能携带并更新数组缓存，
   缓存得到的候选树仍会重新经过局部证书检查，因此缓存不是可信证明来源。
-  新增 `Gomoku.Engine` 后，生产型试验入口改用 `Std.HashMap` 置换表，并由标准哈希表在桶内
-  精确比较 `SearchKey`；哈希冲突只影响性能，不会把不同局面当作同一局面。
+  新增 `Gomoku.Engine` 后，生产型试验入口改用 `Std.HashMap` 置换表。第三轮纯 Lean 优化
+  又把引擎键从 225 格 `Vector Cell` 换成双方各四个 `UInt64` 的 `EnginePositionKey`；根棋盘
+  只编码一次，递归落子通过设置一个 bit 并切换轮次增量更新。标准哈希表在桶内精确比较
+  `EngineSearchKey`；哈希冲突只影响性能，不会把不同紧凑键当作同一键。
   `checkLocalCertificate` 不改变全局根约束，而是允许任意局面作为局部证书根；
   `twoPlyImmediateCertificate` 可从有限的“对手应手 -> 我方立即胜着”表生成完整
   `opponentMoves` 证书，`immediateResponseTable` 则枚举所有合法对手应手并尝试自动
@@ -99,6 +101,11 @@ theorem initial_black_wins :
   节点启用强制着法剪枝：有立即胜着时只搜索胜着；否则若对手下一手可成五，只搜索对应
   防守点。`maxProverMoves` 还能选择性限制目标方分支宽度；正值可能漏掉深层胜解，所以
   `notFound` 只表示当前配置没有找到证明。一步成五分支直接生成终局叶子，省去一次递归访问。
+  紧凑键回归覆盖 63/64、127/128、191/192 和末端索引 224，验证增量结果等于重新扫描棋盘；
+  同一原生 Lean 进程的 20,000 次一步子键“构造 + 哈希”微基准中，旧向量路径约为
+  2.79–2.82 秒，增量 bitboard 路径约为 0.037–0.039 秒（约 72–75 倍）；这只衡量换位表键热路径，
+  不是整棵搜索树的端到端加速比，也不是实际堆内存测量。
+  可用 `lake env lean --run bench/LeanEngineKeyBenchmark.lean` 在当前机器上重新测量。
   `runCheckedEngine` 只返回通过 `checkLocalCertificateAt` 的证书，
   `runCheckedEngine_sound` 将任何被接受结果连接到 `CanForceWin`。
   同一阶段现已增加独立的 `cpp/gomoku_solver` 原型：它以双方各四个 `uint64_t` bitboard
@@ -127,9 +134,10 @@ linter 警告（文件头注释、测试模块使用 `native_decide`）不等同
 核心 soundness 定理仍不
 依赖 `native_decide`。固定候选树回归已在单独构建中通过；在把终局检查提到棋盘级别后，
 两空点局面的 `checkedDepthCertificateFor 2` smoke test 也已通过。快速成五判定的四方向
-和边界回归，以及它和完整 `terminal` 的合法着法等价性也已通过。更深或更宽的搜索仍会
-反复扫描 225 点，暂不作为常规构建目标，待加入增量终局/威胁维护、缓存替换/淘汰策略和
-证书 DAG 共享后再扩展。
+  和边界回归，以及它和完整 `terminal` 的合法着法等价性也已通过。Lean 引擎换位表键已经
+  避免在每个递归节点重新扫描并保存 225 格对象；更深或更宽的搜索仍会为终局、候选和威胁
+  反复扫描棋盘，暂不作为常规构建目标，待加入增量终局/威胁维护、缓存替换/淘汰策略和证书
+  DAG 共享后再扩展。
 
 ---
 
@@ -877,7 +885,8 @@ theorem runCheckedEngine_sound ... : CanForceWin s target
 
 迭代深度从 0 增长到 `maxDepth`。`maxNodes = 0` 表示不设节点上限；其他值是跨所有
 迭代共享的硬预算。置换表只缓存已经得到 `found` 或 `notFound` 的完整搜索结果，不缓存
-因预算耗尽产生的 `cutoff`。哈希键仍包含“剩余深度 + 目标方 + 完整局面”，命中后的
+因预算耗尽产生的 `cutoff`。`EngineSearchKey` 仍包含“剩余深度 + 目标方 + 完整局面”，但
+完整局面由轮次和双方共八个 64 位占位字表示；根局面扫描一次，递归落子增量更新。命中后的
 候选树最终还要重新编译并通过 `checkLocalCertificateAt`。`memoCapacity` 仅是哈希表初始
 容量；`maxMemoEntries = 0` 表示不限制，否则是新建引擎缓存的条目硬上限。缓存饱和时已有
 键仍可更新，新键写入被跳过并累计到 `memoStoreSkips`；当前尚未实现替换或淘汰策略。
@@ -897,7 +906,8 @@ soundness 的选择性搜索开关。搜索器的 `found` 只有通过证书检�
 `Gomoku.Engine` 另用一手立即胜局面验证：深度 1、2 个节点可找到并接受证书；1 个节点
 会准确报告 `nodeLimit`；`maxProverMoves = 1` 只保留首个立即胜着；轮到白棋的镜像局面
 只返回两个强制防守点，而未剪枝的对手候选仍有 221 个。置换表上限为 1 时保持 1 个条目并
-记录 1 次跳过写入；复用首次运行的置换表后可用 0 个新节点、2 次缓存命中返回结果。
+记录 1 次跳过写入；复用首次运行的置换表后可用 0 个新节点、2 次缓存命中返回结果。新增
+紧凑键回归跨越全部四个 64 位分块，并验证八步增量更新与从最终棋盘重新编码完全一致。
 这些测试验证控制流、剪枝和缓存行为，不等同于完整开局求解。
 
 外部搜索器位于 `cpp/`。位置文件明确给出 `turn`、`target` 和按 `y = 0..14` 排列的
