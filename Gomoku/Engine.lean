@@ -9,7 +9,7 @@ small reference search in `Gomoku.Search` with:
 * tactical move ordering and target-side forced-move pruning;
 * an optional target-side selective width limit;
 * immediate-win terminal short-circuits;
-* a size-bounded transposition table carried through the recursive search;
+* a size-bounded transposition table with incrementally updated bitboard keys;
 * iterative deepening and observable search statistics.
 
 The engine never turns its own result directly into a theorem.  A candidate
@@ -56,32 +56,80 @@ def enginePlayerHash : Player → UInt64
   | .white => 2
 -- 为两名玩家分配不同的 64 位基础哈希值。
 
-def engineCellHash : Cell → UInt64
-  | .empty => 3
-  | .stone .black => 5
-  | .stone .white => 7
--- 为三种棋盘格状态分配不同的 64 位基础哈希值。
+structure EngineBitboard where
+  word0 : UInt64 := 0
+  word1 : UInt64 := 0
+  word2 : UInt64 := 0
+  word3 : UInt64 := 0
+  deriving DecidableEq, Repr
+-- 用四个 64 位字保存一个玩家在 225 个坐标上的占位信息，最后 31 位保持未使用。
 
-def enginePositionHash (key : PositionKey) : UInt64 :=
-  key.2.toArray.foldl
-    (fun value cell => mixHash value (engineCellHash cell))
-    (enginePlayerHash key.1)
--- 从行棋方开始依次混合 225 个格子的状态，计算完整局面键的哈希值。
+def EngineBitboard.insert (bits : EngineBitboard) (index : Nat) : EngineBitboard :=
+  let mask := (1 : UInt64) <<< UInt64.ofNat (index % 64)
+  match index / 64 with
+  | 0 => { bits with word0 := bits.word0 ||| mask }
+  | 1 => { bits with word1 := bits.word1 ||| mask }
+  | 2 => { bits with word2 := bits.word2 ||| mask }
+  | 3 => { bits with word3 := bits.word3 ||| mask }
+  | _ => bits
+-- 按行主序索引设置对应 64 位分块中的占位位；合法棋盘索引只会落入前四块。
 
-def engineSearchKeyHash (key : SearchKey) : UInt64 :=
+structure EnginePositionKey where
+  turn : Player
+  black : EngineBitboard := {}
+  white : EngineBitboard := {}
+  deriving DecidableEq, Repr
+-- 用轮次和双方各四个 64 位字保存完整局面，替代换位表中的 225 格对象向量。
+
+def enginePositionKey (s : Position) : EnginePositionKey :=
+  allCoords.foldl (fun key c =>
+    let index := (coordIndex c).1
+    match s.board.cell c with
+    | .empty => key
+    | .stone .black => { key with black := key.black.insert index }
+    | .stone .white => { key with white := key.white.insert index })
+    { turn := s.turn }
+-- 初次进入搜索时扫描棋盘一次，把函数式棋盘压缩为精确的双方 bitboard 键。
+
+def EnginePositionKey.play (key : EnginePositionKey) (m : Coord) : EnginePositionKey :=
+  let index := (coordIndex m).1
+  match key.turn with
+  | .black =>
+      { turn := .white, black := key.black.insert index, white := key.white }
+  | .white =>
+      { turn := .black, black := key.black, white := key.white.insert index }
+-- 对合法落子增量设置当前玩家占位位并切换轮次，避免每个递归节点重新扫描 225 个格子。
+
+structure EngineSearchKey where
+  fuel : Nat
+  target : Player
+  position : EnginePositionKey
+  deriving DecidableEq, Repr
+-- 把剩余深度、目标玩家和紧凑局面组合为 Lean 引擎专用换位表键。
+
+def engineBitboardHash (bits : EngineBitboard) : UInt64 :=
+  mixHash (mixHash bits.word0 bits.word1) (mixHash bits.word2 bits.word3)
+-- 混合四个分块，为单方 bitboard 计算哈希值。
+
+def enginePositionHash (key : EnginePositionKey) : UInt64 :=
+  mixHash (enginePlayerHash key.turn)
+    (mixHash (engineBitboardHash key.black) (engineBitboardHash key.white))
+-- 综合轮次和双方 bitboard 计算紧凑局面哈希。
+
+def engineSearchKeyHash (key : EngineSearchKey) : UInt64 :=
   mixHash (hash key.fuel)
     (mixHash (enginePlayerHash key.target) (enginePositionHash key.position))
--- 综合剩余深度、目标玩家和局面哈希，计算搜索键的哈希值。
+-- 综合剩余深度、目标玩家和紧凑局面计算搜索键哈希。
 
-instance : Hashable SearchKey where
+instance : Hashable EngineSearchKey where
   hash := engineSearchKeyHash
--- 让标准哈希表能够使用项目定义的 `SearchKey`。
+-- 让标准哈希表能够使用紧凑搜索键。
 
-/- Hash lookup is followed by the standard map's exact `BEq SearchKey`
+/- Hash lookup is followed by the standard map's exact `BEq EngineSearchKey`
    comparison.  Hash collisions therefore affect performance, not which
-   position is returned. -/
-abbrev EngineMemo := Std.HashMap SearchKey (Option CandidateTree)
--- 用标准哈希表保存精确搜索键到成功候选树或失败结果的映射。
+   packed position is returned. -/
+abbrev EngineMemo := Std.HashMap EngineSearchKey (Option CandidateTree)
+-- 用标准哈希表保存紧凑搜索键到成功候选树或失败结果的映射。
 
 def emptyEngineMemo (capacity : Nat := 4096) : EngineMemo :=
   Std.HashMap.emptyWithCapacity capacity
@@ -117,7 +165,7 @@ def engineMemoCanInsert (cfg : EngineConfig) (state : EngineState) : Bool :=
   decide (cfg.maxMemoEntries = 0 ∨ state.memo.size < cfg.maxMemoEntries)
 -- 判断换位表是否允许新增键，其中零上限表示不限制条目数。
 
-def engineMemoInsert (cfg : EngineConfig) (key : SearchKey)
+def engineMemoInsert (cfg : EngineConfig) (key : EngineSearchKey)
     (result : Option CandidateTree) (state : EngineState) : EngineState :=
   if state.memo.contains key || engineMemoCanInsert cfg state then
     { state with memo := state.memo.insert key result }
@@ -240,9 +288,11 @@ instance : Nonempty EngineForestStep :=
 -- 提供默认的非空森林搜索步骤。
 
 mutual
-  partial def searchWithEngine (cfg : EngineConfig) (state : EngineState)
-      (fuel : Nat) (s : Position) (target : Player) : EngineStep :=
-    let key := searchKey fuel s target
+  partial def searchWithEngineKeyed (cfg : EngineConfig) (state : EngineState)
+      (fuel : Nat) (s : Position) (target : Player)
+      (positionKey : EnginePositionKey) : EngineStep :=
+    let key : EngineSearchKey :=
+      { fuel := fuel, target := target, position := positionKey }
     match state.memo.get? key with
     | some result =>
         { outcome :=
@@ -253,7 +303,7 @@ mutual
     | none =>
         if engineHasBudget cfg state then
           let computed := searchWithEngineMiss cfg
-            (engineRecordVisit state) fuel s target
+            (engineRecordVisit state) fuel s target positionKey
           match computed.outcome with
           | .found tree =>
               { outcome := .found tree
@@ -264,10 +314,11 @@ mutual
           | .cutoff => computed
         else
           { outcome := .cutoff, state := state }
-  -- 引擎递归入口：先查换位表，再检查节点预算，并仅缓存完整完成的成功或失败结果。
+  -- 紧凑键递归入口：先查换位表，再检查节点预算，并仅缓存完整完成的成功或失败结果。
 
   partial def searchWithEngineMiss (cfg : EngineConfig) (state : EngineState)
-      (fuel : Nat) (s : Position) (target : Player) : EngineStep :=
+      (fuel : Nat) (s : Position) (target : Player)
+      (positionKey : EnginePositionKey) : EngineStep :=
     match terminal s with
     | some out =>
         if out = winner target then
@@ -280,10 +331,10 @@ mutual
             { outcome := .notFound, state := state }
         | depth + 1 =>
             if s.turn = target then
-              searchEngineProver cfg state depth s target
+              searchEngineProver cfg state depth s target positionKey
                 (engineProverCandidateMoves cfg s).toList
             else
-              let forest := searchEngineOpponent cfg state depth s target
+              let forest := searchEngineOpponent cfg state depth s target positionKey
                 (engineCandidateMoves cfg s).toList
               match forest.outcome with
               | .found children =>
@@ -296,7 +347,8 @@ mutual
   -- 处理缓存未命中的局面：检查终局与深度，并按当前行棋方分派存在分支或全称分支搜索。
 
   partial def searchEngineProver (cfg : EngineConfig) (state : EngineState)
-      (depth : Nat) (s : Position) (target : Player) :
+      (depth : Nat) (s : Position) (target : Player)
+      (positionKey : EnginePositionKey) :
       List Coord → EngineStep
     | [] =>
         { outcome := .notFound, state := state }
@@ -305,18 +357,20 @@ mutual
           { outcome := .found (.proverMove s m (.terminal (play s m)))
             state := state }
         else
-          let child := searchWithEngine cfg state depth (play s m) target
+          let child := searchWithEngineKeyed cfg state depth (play s m) target
+            (positionKey.play m)
           match child.outcome with
           | .found subtree =>
               { outcome := .found (.proverMove s m subtree)
                 state := child.state }
           | .notFound =>
-              searchEngineProver cfg child.state depth s target rest
+              searchEngineProver cfg child.state depth s target positionKey rest
           | .cutoff => child
   -- 依次尝试目标玩家候选；立即胜着直接成树，否则找到任一成功子树即可返回。
 
   partial def searchEngineOpponent (cfg : EngineConfig) (state : EngineState)
-      (depth : Nat) (s : Position) (target : Player) :
+      (depth : Nat) (s : Position) (target : Player)
+      (positionKey : EnginePositionKey) :
       List Coord → EngineForestStep
     | [] =>
         { outcome := .found [], state := state }
@@ -324,10 +378,12 @@ mutual
         if createsFiveFast s.board s.turn m then
           { outcome := .notFound, state := state }
         else
-          let child := searchWithEngine cfg state depth (play s m) target
+          let child := searchWithEngineKeyed cfg state depth (play s m) target
+            (positionKey.play m)
           match child.outcome with
           | .found subtree =>
-              let remaining := searchEngineOpponent cfg child.state depth s target rest
+              let remaining := searchEngineOpponent cfg child.state depth s target
+                positionKey rest
               match remaining.outcome with
               | .found children =>
                   { outcome := .found ((m, subtree) :: children)
@@ -343,6 +399,11 @@ mutual
   -- 枚举对手的每个合法应手；对手有立即胜着或任一子分支失败时，目标玩家的证明树即失败。
 end
 
+def searchWithEngine (cfg : EngineConfig) (state : EngineState)
+    (fuel : Nat) (s : Position) (target : Player) : EngineStep :=
+  searchWithEngineKeyed cfg state fuel s target (enginePositionKey s)
+-- 公开入口只在根局面扫描一次棋盘，递归调用随后使用增量更新的紧凑位置键。
+
 structure EngineReport where
   tree : Option CandidateTree
   depth : Option Nat
@@ -354,10 +415,10 @@ def EngineReport.stats (report : EngineReport) : EngineStats :=
   report.state.stats
 -- 从引擎报告中便捷提取统计信息。
 
-def runEngineDepths (cfg : EngineConfig) (s : Position) (target : Player) :
-    EngineState → Nat → Nat → EngineReport
+def runEngineDepthsKeyed (cfg : EngineConfig) (s : Position) (target : Player)
+    (positionKey : EnginePositionKey) : EngineState → Nat → Nat → EngineReport
   | state, depth, 0 =>
-      let step := searchWithEngine cfg state depth s target
+      let step := searchWithEngineKeyed cfg state depth s target positionKey
       match step.outcome with
       | .found tree =>
           { tree := some tree, depth := some depth
@@ -369,17 +430,23 @@ def runEngineDepths (cfg : EngineConfig) (s : Position) (target : Player) :
           { tree := none, depth := none
             status := .nodeLimit, state := step.state }
   | state, depth, remaining + 1 =>
-      let step := searchWithEngine cfg state depth s target
+      let step := searchWithEngineKeyed cfg state depth s target positionKey
       match step.outcome with
       | .found tree =>
           { tree := some tree, depth := some depth
             status := .found, state := step.state }
       | .notFound =>
-          runEngineDepths cfg s target step.state (depth + 1) remaining
+          runEngineDepthsKeyed cfg s target positionKey step.state
+            (depth + 1) remaining
       | .cutoff =>
           { tree := none, depth := none
             status := .nodeLimit, state := step.state }
--- 从给定深度开始执行迭代加深，直到找到候选树、达到最大深度或耗尽节点预算。
+-- 复用同一个根紧凑键执行迭代加深，直到找到候选树、达到最大深度或耗尽节点预算。
+
+def runEngineDepths (cfg : EngineConfig) (s : Position) (target : Player) :
+    EngineState → Nat → Nat → EngineReport :=
+  runEngineDepthsKeyed cfg s target (enginePositionKey s)
+-- 在迭代加深开始前只扫描一次根棋盘，并保留原有无显式键的调用接口。
 
 def runEngineFrom (cfg : EngineConfig) (memo : EngineMemo)
     (s : Position) (target : Player) : EngineReport :=
@@ -442,6 +509,46 @@ theorem runCheckedEngine_sound {cfg : EngineConfig} {s : Position}
 
 /- Small executable regressions.  They intentionally use a local tactical
    position; a complete 15x15 opening search is not part of a regular build. -/
+def enginePackedKeyRegressionMoves : List Coord :=
+  [(0, 0), (4, 3), (4, 4), (8, 7),
+    (8, 8), (12, 11), (12, 12), (14, 14)]
+-- 选择跨越四个 64 位分块边界的八个互异坐标，供紧凑键增量更新回归使用。
+
+def enginePackedKeyRegressionPosition : Position :=
+  enginePackedKeyRegressionMoves.foldl (fun s m => play s m) initialPosition
+-- 从初始局面依次执行边界测试落子，得到用于重新扫描棋盘的参考局面。
+
+def enginePackedKeyRegressionIncremental : EnginePositionKey :=
+  enginePackedKeyRegressionMoves.foldl (fun key m => key.play m)
+    (enginePositionKey initialPosition)
+-- 从初始紧凑键逐步设置相同坐标，用于和完整棋盘重新编码结果比较。
+
+set_option linter.style.nativeDecide false in
+example :
+    enginePackedKeyRegressionIncremental =
+      enginePositionKey enginePackedKeyRegressionPosition ∧
+    enginePackedKeyRegressionIncremental.black.word0 = 1 ∧
+    enginePackedKeyRegressionIncremental.black.word1 = 1 ∧
+    enginePackedKeyRegressionIncremental.black.word2 = 1 ∧
+    enginePackedKeyRegressionIncremental.black.word3 = 1 ∧
+    enginePackedKeyRegressionIncremental.white.word0 =
+      ((1 : UInt64) <<< 63) ∧
+    enginePackedKeyRegressionIncremental.white.word1 =
+      ((1 : UInt64) <<< 63) ∧
+    enginePackedKeyRegressionIncremental.white.word2 =
+      ((1 : UInt64) <<< 63) ∧
+    enginePackedKeyRegressionIncremental.white.word3 =
+      ((1 : UInt64) <<< 32) := by
+  native_decide
+-- 验证增量键等于重新扫描所得键，并检查索引 63/64、127/128、191/192 和 224 的分块边界。
+
+set_option linter.style.nativeDecide false in
+example :
+    enginePositionKey initialPosition ≠
+      enginePositionKey (play initialPosition (7, 7)) := by
+  native_decide
+-- 验证紧凑键能区分空棋盘和黑方中心首着后的局面。
+
 def engineSmokeConfig : EngineConfig :=
   { maxDepth := 1, maxNodes := 2, useThreatOrdering := true }
 -- 为立即获胜局面设置深度一、最多访问两个节点的冒烟测试配置。
