@@ -341,6 +341,30 @@ example : CanForceWin opponentForkPosition .black := by
     rfl
   exact CertificateTree.sound (Classical.choice (by simpa [hroot] using htree))
 
+/- A certificate may share a child node.  Here the first opponent reply is
+   listed twice and both entries reference the same prover subtree.  Duplicate
+   reply entries are harmless because coverage is a membership condition; the
+   checker still validates the shared node and its position once per edge. -/
+def sharedSubtreeCertificate : CompactCertificate :=
+  { target := .black
+    root := 0
+    nodes := #[
+      .opponentMoves opponentForkPosition
+        #[((4, 7), 1), ((4, 7), 1), ((9, 7), 2)],
+      .proverMove (play opponentForkPosition (4, 7)) (9, 7) 3,
+      .proverMove (play opponentForkPosition (9, 7)) (4, 7) 4,
+      .terminal (play (play opponentForkPosition (4, 7)) (9, 7)) .blackWin,
+      .terminal (play (play opponentForkPosition (9, 7)) (4, 7)) .blackWin
+    ] }
+
+example : checkLocalCertificateAt opponentForkPosition
+    sharedSubtreeCertificate = true := by
+  native_decide
+
+example : CanForceWin opponentForkPosition .black := by
+  apply local_certificate_at_sound opponentForkPosition sharedSubtreeCertificate
+  native_decide
+
 /- The generic two-ply generator accepts the same response table and feeds it
    through the local checker.  This is the first regression test for the
    reusable search-to-certificate adapter, rather than a hand-written node

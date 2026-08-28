@@ -7,3 +7,5 @@ import Gomoku.Certificate
 import Gomoku.Search
 import Gomoku.Examples
 import Gomoku.Adversarial
+import Gomoku.RuleAudit
+import Gomoku.PatternAudit
