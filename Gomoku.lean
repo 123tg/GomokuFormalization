@@ -6,6 +6,7 @@ import Gomoku.Tactics
 import Gomoku.Certificate
 import Gomoku.Search
 import Gomoku.Engine
+import Gomoku.Parametric
 import Gomoku.Generated.CppSmoke
 import Gomoku.Generated.CppFork
 import Gomoku.Generated.CppVcf
