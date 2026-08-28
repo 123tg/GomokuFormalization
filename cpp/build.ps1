@@ -45,6 +45,17 @@ if ($LASTEXITCODE -ne 0) {
   throw 'failed to build solve5x5.exe'
 }
 
+$smallDrawSolve = @(
+  '-std=c++20', '-O3', '-DNDEBUG', '-Wall', '-Wextra', '-Wpedantic',
+  (Join-Path $cppRoot 'tools\solve_small_draws.cpp')
+)
+
+& g++ @smallDrawSolve '-o' (Join-Path $buildDirFull 'solve_small_draws.exe')
+if ($LASTEXITCODE -ne 0) {
+  throw 'failed to build solve_small_draws.exe'
+}
+
 Write-Output "Built $buildDirFull\gomoku_solver.exe"
 Write-Output "Built $buildDirFull\gomoku_tests.exe"
 Write-Output "Built $buildDirFull\solve5x5.exe"
+Write-Output "Built $buildDirFull\solve_small_draws.exe"
