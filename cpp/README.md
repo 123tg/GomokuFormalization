@@ -5,6 +5,10 @@ Lean Gomoku model. It does not change `CompactCertificate`: a successful run
 emits a Lean source file containing the same `terminal`, `proverMove`, and
 `opponentMoves` nodes that `Gomoku.Certificate` already checks.
 
+The separate C++20 utilities under `cpp/tools/` study complete 5x5--8x8
+Maker--Breaker draw proofs. Their build commands, proof-status distinction,
+and recorded results are documented in `cpp/tools/README.md`.
+
 ## Current engine
 
 - four-word bitboards for each player;
