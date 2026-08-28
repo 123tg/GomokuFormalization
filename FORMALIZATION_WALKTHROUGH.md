@@ -68,6 +68,7 @@ Search / Engine / C++（不可信地寻找候选证明）
 | [`Certificate`](Gomoku/Certificate.lean) | 怎样检查外部生成的有限证明？ | `CompactCertificate`、`checkCertificate`、soundness |
 | [`Search`](Gomoku/Search.lean) | Lean 内怎样生成候选证明？ | 候选枚举、快速五连、有限深度搜索 |
 | [`Engine`](Gomoku/Engine.lean) | 怎样加入预算、换位表和迭代加深？ | 可观测的预算搜索与已检查结果 |
+| [`Parametric`](Gomoku/Parametric.lean) | 怎样在不破坏原模型时改变棋盘边长与连珠长度？ | `GameSpec`、5×5 两层搜索与可靠检查 |
 | [`Generated`](Gomoku/Generated) | C++ 生成的数据能否被 Lean 接收？ | 2、5、6 节点局部证书回归 |
 | [`Examples`](Gomoku/Examples.lean) | 基本 API 是否符合预期？ | 正向小例子 |
 | [`Adversarial`](Gomoku/Adversarial.lean) | 错误证书和过强语义是否会被拒绝？ | 正反例与语义边界审计 |
@@ -566,9 +567,11 @@ C++ / Lean 搜索器找到候选树
 | 已完成 | 紧凑证书的节点、边、根和对手覆盖检查 |
 | 已完成 | 紧凑证书到 `CanForceWin` 的 Lean 内可靠性证明 |
 | 已完成 | Lean 有限深度引擎和 C++ DFPN/VCF 原型的局部证书闭环 |
+| 已完成 | 独立参数化规格与真正 5×5 五子连珠局部证书闭环（覆盖 18 个白方应手） |
 | 部分完成 | 棋形库只覆盖已经冻结并证明的模式，不代表所有命名变体 |
 | 部分完成 | 搜索性能仍缺增量终局/威胁维护、缓存淘汰、多线程和证书 DAG 共享 |
 | 未完成 | 真实空棋盘 15×15 黑方完整策略证书 |
+| 未完成 | 空棋盘 5×5 的完整博弈求解；当前 5×5 结论仅针对局部双威胁根 |
 | 未完成 | `initial_black_wins` 最终定理 |
 
 下一阶段的正确完成条件不是搜索器打印 `found`，而是它产生一张以 `initialPosition` 为根、目标为黑方且能通过 `checkCertificate` 的完整证书。届时只需应用现有的 `compact_certificate_sound` 即可闭合最终定理。

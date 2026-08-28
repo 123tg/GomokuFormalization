@@ -22,6 +22,9 @@ Current modules:
 - `Gomoku.Engine`: a budgeted, iterative-deepening AND/OR searcher with forced tactical
   pruning, an optional target-side width limit, a bounded hash transposition table,
   statistics, and a checked certificate boundary.
+- `Gomoku.Parametric`: a separate board-size/win-length-parameterized model with an
+  executable two-ply searcher, a proved checker boundary, and a checked 5x5 connect-five
+  double-threat example. The original 15x15 API is unchanged.
 - `cpp/`: an untrusted C++17 iterative DFPN searcher using bitboards, incremental Zobrist
   hashing, a bounded VCF move oracle, resource limits, and direct export to the unchanged
   Lean `CompactCertificate`.
@@ -32,6 +35,13 @@ Current modules:
 - `Gomoku.Adversarial`: executable counterexamples and regression checks from the semantic audit.
 
 The rule layer uses the standard unrestricted semantics: a contiguous line of at least five stones wins immediately, including six or more in a row; a full board without a winner is a draw. Forbidden-move rules are intentionally outside this version.
+
+`Gomoku.Parametric` independently packages `boardSize` and `winLength` in `GameSpec`.
+Its `fiveByFiveSpec` instantiates a genuine 5x5 connect-five board. The included sparse
+double-threat root has 18 legal White replies; `searchTwoPly` covers all 18, the independent
+`checkTwoPlyCertificate` accepts the result, and `fiveByFive_black_forces_win` derives the
+parameterized `ForceWin` conclusion. This is a local two-ply result, not a solution of the
+empty 5x5 board or the original empty 15x15 board.
 
 The global 15x15 first-player theorem is not asserted without a strategy certificate. The
 dependent `CertificateTree` interface is sound, and the compact checker is now connected to it:

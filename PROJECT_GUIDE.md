@@ -128,16 +128,23 @@ theorem initial_black_wins :
 DFPN 展开节点从 13 降到 7；VCF 节点预算耗尽或关闭时，完整 DFPN 仍生成同一证明。
 `lake build Gomoku.Generated.CppSmoke`、`lake build Gomoku.Generated.CppFork` 和
 `lake build Gomoku.Generated.CppVcf` 均通过；先顺序构建内存占用较高的模块后，
-`lake build` 全工程通过（8720 jobs）。预算、选择性分支、强制防守、缓存上限和证书回归
+`lake build` 全工程通过（8721 jobs）。预算、选择性分支、强制防守、缓存上限和证书回归
 均通过。构建输出中的
 linter 警告（文件头注释、测试模块使用 `native_decide`）不等同于 Lean 类型检查失败；
 核心 soundness 定理仍不
 依赖 `native_decide`。固定候选树回归已在单独构建中通过；在把终局检查提到棋盘级别后，
-两空点局面的 `checkedDepthCertificateFor 2` smoke test 也已通过。快速成五判定的四方向
+  两空点局面的 `checkedDepthCertificateFor 2` smoke test 也已通过。快速成五判定的四方向
   和边界回归，以及它和完整 `terminal` 的合法着法等价性也已通过。Lean 引擎换位表键已经
   避免在每个递归节点重新扫描并保存 225 格对象；更深或更宽的搜索仍会为终局、候选和威胁
   反复扫描棋盘，暂不作为常规构建目标，待加入增量终局/威胁维护、缓存替换/淘汰策略和证书
   DAG 共享后再扩展。
+
+新增的 `Gomoku.Parametric` 把方形棋盘边长和获胜连珠长度分别保存为
+`GameSpec.boardSize` 与 `GameSpec.winLength`，不修改原有 15×15 API。当前
+`fiveByFiveSpec` 是真正的 5×5、五子连珠实例。其双威胁回归根局面有 18 个白方合法应手，
+`searchTwoPly` 为每个应手生成黑方一步胜着，`checkTwoPlyCertificate_sound` 证明检查器
+通过即可推出参数化 `ForceWin`，最终定理为 `fiveByFive_black_forces_win`。这只是局部
+两层必胜结论，尚未求解空 5×5 棋盘。
 
 ---
 
@@ -678,6 +685,7 @@ checkCertificate c = true
 - [x] 紧凑证书到 CertificateTree 的可信转换。
 - [x] 外部搜索器与 Lean 校验器之间的最小适配接口。
 - [x] 带硬节点预算、哈希置换表、迭代加深和统计信息的 Lean 搜索引擎。
+- [x] 独立参数化棋盘/连珠规格，以及 5×5 五子棋两层搜索、检查和 soundness 闭环。
 - [x] 目标方立即胜着/强制防守剪枝、可选分支宽度和一步成五短路。
 - [x] 置换表条目硬上限及饱和写入统计（尚无替换/淘汰策略）。
 - [x] 搜索引擎候选树重新通过局部证书检查，并给出 `runCheckedEngine_sound`。
