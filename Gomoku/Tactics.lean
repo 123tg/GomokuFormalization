@@ -586,6 +586,25 @@ def ImmediateSafeDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop 
     ∀ r, legalMove (play s m) r →
       HasImmediateWin (play (play s m) r) p
 
+/- A non-circular, two-stage sufficient condition for a geometric double open
+   three. After every legal defense `r`, the target has a legal extension `q`
+   which creates two distinct immediate winning cells. -/
+def StagedSafeDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop :=
+  DoubleOpenThree s p m ∧
+    terminal (play s m) = none ∧
+    ¬ OpponentHasImmediateWin (play s m) p ∧
+    ∀ r, legalMove (play s m) r →
+      ∃ q, legalMove (play (play s m) r) q ∧
+        terminal (play (play (play s m) r) q) = none ∧
+        ¬ HasImmediateWin (play (play (play s m) r) q) (Player.other p) ∧
+        HasDoubleThreat (play (play (play s m) r) q) p
+
+instance stagedSafeDoubleOpenThreeDecidable
+    (s : Position) (p : Player) (m : Coord) :
+    Decidable (StagedSafeDoubleOpenThree s p m) := by
+  unfold StagedSafeDoubleOpenThree
+  infer_instance
+
 theorem not_safeDoubleOpenThree_of_opponentImmediate
     {s : Position} {p : Player} {m : Coord}
     (hopp : OpponentHasImmediateWin (play s m) p) :
@@ -796,6 +815,42 @@ theorem safeDoubleOpenThree_forces_win {s : Position} {p : Player} {m : Coord}
   have _ := hnoopp
   exact ForceWin.choose hterm hturn m hlegal
     (ForceWin.respond hchildterm hchildturn hdefenses)
+
+theorem stagedSafeDoubleOpenThree_defense_forces_win
+    {s : Position} {p : Player} {m r : Coord}
+    (hstage : StagedSafeDoubleOpenThree s p m)
+    (hr : legalMove (play s m) r) :
+    CanForceWin (play (play s m) r) p := by
+  rcases hstage with ⟨hdouble, _hchildterm, _hnoopp, hresponses⟩
+  rcases hresponses r hr with ⟨q, hq, htermq, hnooppq, hthreatq⟩
+  have hturn : s.turn = p := hdouble.1
+  have htermr : terminal (play (play s m) r) = none :=
+    Position.terminal_none_of_not_isTerminal hq.1
+  have hturnr : (play (play s m) r).turn = p := by
+    change s.turn.other.other = p
+    rw [hturn]
+    exact Player.other_other p
+  have hturnq :
+      (play (play (play s m) r) q).turn = Player.other p := by
+    change (play (play s m) r).turn.other = p.other
+    rw [hturnr]
+  exact ForceWin.choose htermr hturnr q hq
+    (doubleThreat_forces_win hturnq htermq hnooppq hthreatq)
+
+theorem stagedSafeDoubleOpenThree_implies_safe
+    {s : Position} {p : Player} {m : Coord}
+    (hstage : StagedSafeDoubleOpenThree s p m) :
+    SafeDoubleOpenThree s p m := by
+  refine ⟨hstage.1, hstage.2.1, hstage.2.2.1, ?_⟩
+  intro r hr
+  exact stagedSafeDoubleOpenThree_defense_forces_win hstage hr
+
+theorem stagedSafeDoubleOpenThree_forces_win
+    {s : Position} {p : Player} {m : Coord}
+    (hstage : StagedSafeDoubleOpenThree s p m) :
+    CanForceWin s p :=
+  safeDoubleOpenThree_forces_win
+    (stagedSafeDoubleOpenThree_implies_safe hstage)
 
 theorem safeBrokenOpenThree_forces_win {s : Position} {p : Player} {m : Coord}
     (hsafe : SafeBrokenOpenThree s p m) :

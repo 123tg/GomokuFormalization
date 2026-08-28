@@ -48,6 +48,34 @@ inductive Reachable : Position → Prop where
   | step {s : Position} {c : Coord} :
       Reachable s → legalMove s c → Reachable (play s c)
 
+def playMoves : Position → List Coord → Position
+  | s, [] => s
+  | s, m :: moves => playMoves (play s m) moves
+
+def LegalMoveSequence : Position → List Coord → Prop
+  | _, [] => True
+  | s, m :: moves => legalMove s m ∧ LegalMoveSequence (play s m) moves
+
+instance legalMoveSequenceDecidable (s : Position) (moves : List Coord) :
+    Decidable (LegalMoveSequence s moves) := by
+  induction moves generalizing s with
+  | nil =>
+      exact inferInstanceAs (Decidable True)
+  | cons m moves ih =>
+      simp only [LegalMoveSequence]
+      infer_instance
+
+theorem reachable_playMoves {s : Position} (hs : Reachable s) :
+    ∀ moves, LegalMoveSequence s moves → Reachable (playMoves s moves) := by
+  intro moves
+  induction moves generalizing s with
+  | nil =>
+      intro _
+      simpa [playMoves] using hs
+  | cons m moves ih =>
+      intro hseq
+      exact ih (Reachable.step hs hseq.1) hseq.2
+
 def countBlack (s : Position) : Nat := s.board.count .black
 def countWhite (s : Position) : Nat := s.board.count .white
 
@@ -111,6 +139,22 @@ theorem terminal_none_of_not_isTerminal {s : Position} (h : ¬ isTerminal s) :
   unfold terminal
   split <;> simp_all [isTerminal]
 
+theorem terminal_draw_iff {s : Position} :
+    terminal s = some .draw ↔
+      ¬ hasAtLeastFive s.board .black ∧
+        ¬ hasAtLeastFive s.board .white ∧ Board.full s.board := by
+  constructor
+  · intro h
+    by_cases hb : hasAtLeastFive s.board .black
+    · simp [terminal, hb] at h
+    · by_cases hw : hasAtLeastFive s.board .white
+      · simp [terminal, hb, hw] at h
+      · by_cases hf : Board.full s.board
+        · exact ⟨hb, hw, hf⟩
+        · simp [terminal, hb, hw, hf] at h
+  · rintro ⟨hb, hw, hf⟩
+    simp [terminal, hb, hw, hf]
+
 theorem not_isTerminal_of_terminal_none {s : Position}
     (h : terminal s = none) : ¬ isTerminal s := by
   intro hs
@@ -126,6 +170,21 @@ theorem not_isTerminal_of_terminal_none {s : Position}
     · by_cases hw' : hasAtLeastFive s.board .white
       · simp [terminal, hb', hw'] at h
       · simp [terminal, hb', hw', hf] at h
+
+theorem terminal_none_iff {s : Position} :
+    terminal s = none ↔ ¬ isTerminal s := by
+  constructor
+  · exact not_isTerminal_of_terminal_none
+  · exact terminal_none_of_not_isTerminal
+
+theorem terminal_ne_none_iff {s : Position} :
+    terminal s ≠ none ↔ isTerminal s := by
+  constructor
+  · intro hne
+    by_contra hs
+    exact hne (terminal_none_of_not_isTerminal hs)
+  · intro hs hnone
+    exact (not_isTerminal_of_terminal_none hnone) hs
 
 theorem exists_legalMove_of_terminal_none {s : Position}
     (h : terminal s = none) : ∃ c, legalMove s c := by
@@ -177,6 +236,19 @@ theorem play_emptyCount_lt {s : Position} {c : Coord} (hlegal : legalMove s c) :
     Board.emptyCount (play s c).board < Board.emptyCount s.board := by
   have h := play_emptyCount_succ hlegal
   omega
+
+theorem playMoves_emptyCount_add_length {s : Position} {moves : List Coord}
+    (hseq : LegalMoveSequence s moves) :
+    Board.emptyCount (playMoves s moves).board + moves.length =
+      Board.emptyCount s.board := by
+  induction moves generalizing s with
+  | nil =>
+      simp [playMoves]
+  | cons m moves ih =>
+      have hstep := play_emptyCount_succ hseq.1
+      have htail := ih (s := play s m) hseq.2
+      simp [playMoves]
+      omega
 
 /- A legal move starts from a position with no winner.  The newly placed
    stone may create a line only for the mover, so the child cannot contain
