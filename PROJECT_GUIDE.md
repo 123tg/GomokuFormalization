@@ -144,7 +144,11 @@ linter 警告（文件头注释、测试模块使用 `native_decide`）不等同
 `fiveByFiveSpec` 是真正的 5×5、五子连珠实例。其双威胁回归根局面有 18 个白方合法应手，
 `searchTwoPly` 为每个应手生成黑方一步胜着，`checkTwoPlyCertificate_sound` 证明检查器
 通过即可推出参数化 `ForceWin`，最终定理为 `fiveByFive_black_forces_win`。这只是局部
-两层必胜结论，尚未求解空 5×5 棋盘。
+两层必胜结论。独立的 `cpp/tools/solve5x5.cpp` 随后从空 5×5 棋盘执行精确三值
+negamax，使用 D4 对称归一化、带上下界的 alpha-beta 和固定扁平置换表；本地完整运行
+510,652,639 个递归节点、最大深度 25，计算结论为和棋。这个结论目前是可复现的原生
+计算结果，还不是 Lean 定理：现有 `ForceWin` 只表达一方强制获胜，要形式化和棋还需
+参数化的结果证书、双方不败语义及相应 checker soundness。
 
 ---
 
@@ -686,6 +690,7 @@ checkCertificate c = true
 - [x] 外部搜索器与 Lean 校验器之间的最小适配接口。
 - [x] 带硬节点预算、哈希置换表、迭代加深和统计信息的 Lean 搜索引擎。
 - [x] 独立参数化棋盘/连珠规格，以及 5×5 五子棋两层搜索、检查和 soundness 闭环。
+- [x] 空 5×5 五子棋的本地精确三值完整求解（计算结果：和棋）。
 - [x] 目标方立即胜着/强制防守剪枝、可选分支宽度和一步成五短路。
 - [x] 置换表条目硬上限及饱和写入统计（尚无替换/淘汰策略）。
 - [x] 搜索引擎候选树重新通过局部证书检查，并给出 `runCheckedEngine_sound`。
@@ -696,6 +701,7 @@ checkCertificate c = true
 - [x] CertificateTree 与 CanForceWin 的双向等价接口。
 - [ ] 对称性压缩的独立正确性证明。
 - [ ] 实际 15×15 策略证书。
+- [ ] 空 5×5 和棋结果的 Lean 可检查证书与 soundness 定理。
 - [ ] initial_black_wins。
 
 ---

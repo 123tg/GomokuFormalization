@@ -35,5 +35,16 @@ if ($LASTEXITCODE -ne 0) {
   throw 'failed to build gomoku_tests.exe'
 }
 
+$fullSolve = @(
+  '-std=c++20', '-O3', '-DNDEBUG', '-Wall', '-Wextra', '-Wpedantic',
+  (Join-Path $cppRoot 'tools\solve5x5.cpp')
+)
+
+& g++ @fullSolve '-o' (Join-Path $buildDirFull 'solve5x5.exe')
+if ($LASTEXITCODE -ne 0) {
+  throw 'failed to build solve5x5.exe'
+}
+
 Write-Output "Built $buildDirFull\gomoku_solver.exe"
 Write-Output "Built $buildDirFull\gomoku_tests.exe"
+Write-Output "Built $buildDirFull\solve5x5.exe"

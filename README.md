@@ -41,7 +41,10 @@ Its `fiveByFiveSpec` instantiates a genuine 5x5 connect-five board. The included
 double-threat root has 18 legal White replies; `searchTwoPly` covers all 18, the independent
 `checkTwoPlyCertificate` accepts the result, and `fiveByFive_black_forces_win` derives the
 parameterized `ForceWin` conclusion. This is a local two-ply result, not a solution of the
-empty 5x5 board or the original empty 15x15 board.
+original empty 15x15 board. The separate exact solver in `cpp/tools/solve5x5.cpp` has now
+exhaustively evaluated the empty 5x5 connect-five game as a draw. That is a reproducible
+native computation, not yet a Lean theorem; a formally checked draw requires an outcome
+certificate interface beyond the current forced-win-only `ForceWin` type.
 
 The global 15x15 first-player theorem is not asserted without a strategy certificate. The
 dependent `CertificateTree` interface is sound, and the compact checker is now connected to it:
