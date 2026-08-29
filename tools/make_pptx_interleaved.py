@@ -709,14 +709,14 @@ note_band(s, 6.6, '编号规则：数组下标即编号，parent < child；两�
 footer(s, 11)
 
 # ================================================================
-# Slide 12 · Code: DefenseCertificate structure + checker (Lean)
+# Slide 12 · Code: DefenseCertificate structure (Lean)
 # ================================================================
 s = new_slide()
-header(s, '代码对照 ②：证书数据结构与检查器', 'Gomoku/Defense.lean')
+header(s, '代码对照 ②：证书数据结构', 'Gomoku/Defense.lean')
 text(s, 0.62, 1.18, 12.0, 0.4,
-     [{'runs': [('可序列化的扁平证书节点 + 逐节点布尔检查器 —— 检查器不信任搜索器，'
-                 '对每个节点重新计算。', 14.5, False, GRAY)]}])
-code_block(s, 0.62, 1.7, 12.09, 3.1, [
+     [{'runs': [('模式 B 的证书格式：可序列化的扁平节点数组，子树用下标引用。',
+                 14.5, False, GRAY)]}])
+code_block(s, 0.62, 1.7, 12.09, 4.6, [
     ('inductive DefenseCertificateNode where', 'key'),
     ('  | terminal (position : Position) (outcome : Outcome)', 'code'),
     ('  | defenderMove (position : Position) (move : Coord) (child : Nat)', 'code'),
@@ -726,17 +726,23 @@ code_block(s, 0.62, 1.7, 12.09, 3.1, [
     ('  defender : Player   -- 防守方：white 或 black', 'code'),
     ('  root : Nat          -- 根节点下标', 'code'),
     ('  nodes : Array DefenseCertificateNode', 'code'),
-], caption='DefenseCertificate — 模式 B 的证书格式', size=12)
-code_block(s, 0.62, 4.95, 12.09, 1.95, [
-    ('def checkDefenseNode (defender : Player) (size : Nat) : DefenseCertificateNode → Bool', 'key'),
-    ('  | .terminal s out =>', 'code'),
-    ('      decide (terminal s = some out) &&', 'code'),
-    ('        (decide (out = winner defender) || decide (out = .draw))', 'code'),
-    ('  | .attackerMoves s children =>', 'code'),
-    ('      decide (terminal s = none) && decide (s.turn = Player.other defender) &&', 'code'),
-    ('        allRefsValid size children && allMovesLegal s children &&', 'code'),
-    ('        allLegalMovesCovered s children && movesDistinct children', 'code'),
-], caption='checkDefenseNode — 攻击方全应手覆盖是硬约束', size=11.5)
+    ('', 'code'),
+    ('-- 三种节点：terminal 终局 / defenderMove 防守方一步 /', 'cmt'),
+    ('-- attackerMoves 攻击方全部应手（children 数组）', 'cmt'),
+], caption='DefenseCertificate — 模式 B 的证书格式', size=13)
+ann = [
+    ('terminal', '终局:防守方胜或和棋', GREEN),
+    ('defenderMove', '防守方选一步 → child', BLUE),
+    ('attackerMoves', '攻击方全应手 → children', RGBColor(0xD9, 0x7B, 0x29)),
+]
+for i, (k, d, c) in enumerate(ann):
+    x = 0.62 + i * 4.13
+    box(s, x, 6.45, 3.93, 0.5, fill=LIGHT,
+        shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12)
+    text(s, x + 0.25, 6.5, 1.9, 0.42, [{'runs': [(k, 13.5, True, c)]}],
+         anchor=MSO_ANCHOR.MIDDLE)
+    text(s, x + 2.1, 6.5, 1.8, 0.42,
+         [{'runs': [(d, 11, False, INK)]}], anchor=MSO_ANCHOR.MIDDLE)
 footer(s, 12)
 
 # ================================================================
@@ -789,37 +795,40 @@ three_positions_slide(
 three_positions_slide(
     15, '实战：中盘和棋局面 ③', 'DefenseSearcher Output',
     DRAW_POSITIONS[6:9],
-    '证书只是候选：Lean 检查器逐节点重算通过后，才能组合出 StandardDraw 定理。')
+    '每个局面都有白防黑、黑防白两张防守证书，分别给出双方的阻止获胜结论。')
 
 # ================================================================
 # Slide 16 · Code: from certificates to the draw theorem
 # ================================================================
 s = new_slide()
-header(s, '代码对照 ③：从证书到 StandardDraw 定理', 'Gomoku/Generated/Draw7x7.lean')
+header(s, '代码对照 ③：两张证书 → StandardDraw 定理', 'Gomoku/Generated/Draw7x7.lean')
 text(s, 0.62, 1.18, 12.0, 0.4,
-     [{'runs': [('C++ 生成的 Lean 文件：检查器验证两张证书，soundness 定理组合出和棋。',
-                 14.5, False, GRAY)]}])
-code_block(s, 0.62, 1.7, 12.09, 2.6, [
-    ('theorem draw7x7WhiteChecked :', 'key'),
-    ('    checkDefenseCertificateAt draw7x7RootPosition', 'code'),
-    ('        draw7x7WhiteDefenseCertificate = true := by', 'code'),
-    ('  native_decide   -- 机器重算：白防黑证书逐节点通过', 'cmt'),
+     [{'runs': [('C++ 生成的 Lean 文件：白防黑 + 黑防白两张防守证书，'
+                 '用 soundness 定理组合出和棋结论。', 14.5, False, GRAY)]}])
+code_block(s, 0.62, 1.7, 12.09, 3.3, [
+    ('theorem draw7x7WhitePrevents : WhiteCanPreventBlackWin draw7x7RootPosition', 'key'),
+    ('  := white_defense_certificate_sound ...   -- 白防黑证书', 'cmt'),
     ('', 'code'),
-    ('theorem draw7x7BlackChecked :', 'key'),
-    ('    checkDefenseCertificateAt draw7x7RootPosition', 'code'),
-    ('        draw7x7BlackDefenseCertificate = true := by', 'code'),
-    ('  native_decide   -- 机器重算：黑防白证书逐节点通过', 'cmt'),
-], caption='两张证书的检查（Gomoku/Generated/Draw7x7.lean）', size=12)
-code_block(s, 0.62, 4.45, 12.09, 2.35, [
+    ('theorem draw7x7BlackPrevents : BlackCanPreventWhiteWin draw7x7RootPosition', 'key'),
+    ('  := black_defense_certificate_sound ...   -- 黑防白证书', 'cmt'),
+    ('', 'code'),
     ('theorem draw7x7StandardDraw : StandardDraw draw7x7RootPosition :=', 'key'),
     ('  standardDraw_of_mutualDefense', 'code'),
-    ('    draw7x7WhitePrevents   -- WhiteCanPreventBlackWin draw7x7RootPosition', 'cmt'),
-    ('    draw7x7BlackPrevents   -- BlackCanPreventWhiteWin draw7x7RootPosition', 'cmt'),
-    ('', 'code'),
-    ('-- 信任边界：搜索器只提供证书数据；定理由 Lean 内核 + soundness 证明保证', 'cmt'),
-], caption='组合定理（依赖 Defense.lean 的 soundness）', size=12)
-note_band(s, 6.95, '检查器重算 + soundness 定理 = 不信任搜索器也能得到真定理。',
-          h=0.42, size=12.5)
+    ('    draw7x7WhitePrevents', 'code'),
+    ('    draw7x7BlackPrevents', 'code'),
+], caption='两张防守证书 → 和棋定理（Gomoku/Generated/Draw7x7.lean）', size=13)
+ann = [
+    ('white_defense_certificate_sound', '白防黑 → WhiteCanPreventBlackWin', GREEN),
+    ('black_defense_certificate_sound', '黑防白 → BlackCanPreventWhiteWin', BLUE),
+    ('standardDraw_of_mutualDefense', '两者组合 → StandardDraw', RGBColor(0xD9, 0x7B, 0x29)),
+]
+for i, (k, d, c) in enumerate(ann):
+    x = 0.62 + i * 4.13
+    box(s, x, 5.5, 3.93, 1.0, fill=LIGHT,
+        shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.1)
+    text(s, x + 0.25, 5.6, 3.5, 0.4, [{'runs': [(k, 11.5, True, c)]}])
+    text(s, x + 0.25, 6.0, 3.5, 0.4,
+         [{'runs': [(d, 11, False, INK)]}])
 footer(s, 16)
 
 # ================================================================
@@ -996,10 +1005,10 @@ NOTES = [
     '通过才得到 CanForceWin 或 CanPreventWin 定理。',
     '实战第一页：前三个和棋局面。每个局面每个长度 5 窗口都含黑白两子。',
     '实战第二页：中间三个局面，都由 DefenseSearcher 生成两张防守证书。',
-    '实战第三页：最后三个局面。证书只是候选，Lean 检查通过才是定理。',
-    '代码对照三：Draw7x7.lean 里两张证书的检查用 native_decide 机器重算，'
-    'standardDraw_of_mutualDefense 把两张防守证书组合成 StandardDraw 定理——'
-    '这就是“搜索器只出数据，定理由 Lean 内核保证”的直接体现。',
+    '实战第三页：最后三个局面，每局都有白防黑、黑防白两张防守证书。',
+    '代码对照三：Draw7x7.lean 里两张防守证书分别给出 WhiteCanPreventBlackWin 和 '
+    'BlackCanPreventWhiteWin，standardDraw_of_mutualDefense 把它们组合成 '
+    'StandardDraw 定理——和棋结论来自两张证书的组合。',
     '验证链：构造局面、C++ 找证书、Lean 重算、组合出 StandardDraw；五项断言 9/9 通过。',
     '汇总表：九个局面的两张证书全部通过检查，每个都证明了 StandardDraw。',
     '不足一：空棋盘开局求解未完成；空棋盘和棋其实只差一环——黑防白已用策略偷取'
