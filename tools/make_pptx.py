@@ -39,8 +39,9 @@ BLANK = prs.slide_layouts[6]
 TOTAL = 28
 
 # 9 machine-verified 7×7 draw positions (lean file, seed, board PNG).
-BOARD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                         'LeanProjects-work', 'docs', 'boards')
+# Script lives in <repo>/tools/, boards live in <repo>/docs/boards/.
+BOARD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         'docs', 'boards')
 DRAW_POSITIONS = [
     ('Draw7x7.lean',   'seed 1', 'Draw7x7.png'),
     ('Draw7x7s2.lean', 'seed 2', 'Draw7x7s2.png'),
@@ -406,29 +407,56 @@ text(s, bx, 6.1, 7.3, 0.6,
 footer(s, 5)
 
 # ================================================================
-# Slide 6 · Searcher architecture
+# Slide 6 · Searcher architecture (two modes)
 # ================================================================
 s = new_slide()
-header(s, '搜索器整体架构', 'Architecture · C++17')
-stages = [('输入局面', '7×7 + 轮到谁', NAVY2),
-          ('DFPN 主搜索', '证明数优先', BLUE),
-          ('VCF 快攻', '连续冲四检测', GOLD_D),
-          ('候选证书', 'CompactCertificate', ORANGE),
-          ('导出 Lean 源码', 'def certificate', GREEN)]
+header(s, '搜索器整体架构：双模式', 'Architecture · C++17')
+# Mode A: force-win (DFPN/VCF)
+sp = box(s, 0.62, 1.35, 12.09, 0.62, fill=NAVY,
+         shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12)
+text_in(sp, [{'runs': [('模式 A · 强制胜搜索', 16, True, WHITE)]},
+            {'runs': [('目标：找到“某方能强制获胜”的策略树', 12.5, False,
+                       RGBColor(0xCF, 0xD8, 0xE8))]}])
+stagesA = [('输入局面', '7×7 + 轮到谁', NAVY2),
+           ('DFPN 主搜索', '证明数优先', BLUE),
+           ('VCF 快攻', '连续冲四检测', GOLD_D),
+           ('候选证书', 'CompactCertificate', ORANGE),
+           ('导出 Lean', 'def certificate', GREEN)]
 x = 0.62
-for i, (t1, t2, c) in enumerate(stages):
-    sp = box(s, x, 1.85, 2.16, 1.3, fill=c, shape=MSO_SHAPE.ROUNDED_RECTANGLE,
+for i, (t1, t2, c) in enumerate(stagesA):
+    sp = box(s, x, 2.15, 2.16, 1.1, fill=c, shape=MSO_SHAPE.ROUNDED_RECTANGLE,
              radius=0.12)
-    text_in(sp, [{'runs': [(t1, 16, True, WHITE)]},
-                 {'runs': [(t2, 12, False, WHITE)]}])
+    text_in(sp, [{'runs': [(t1, 15, True, WHITE)]},
+                 {'runs': [(t2, 11.5, False, WHITE)]}])
     if i < 4:
-        arrow(s, x + 2.16, 2.5, x + 2.58, 2.5, color=GRAY, width=2.2)
+        arrow(s, x + 2.16, 2.7, x + 2.58, 2.7, color=GRAY, width=2.0)
+    x += 2.58
+# Mode B: defense search (DefenseSearcher)
+sp = box(s, 0.62, 3.5, 12.09, 0.62, fill=NAVY,
+         shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12)
+text_in(sp, [{'runs': [('模式 B · 防守证明', 16, True, WHITE)]},
+            {'runs': [('目标：证明“防守方能阻止对方获胜”（--prove prevent-black-win '
+                       '| prevent-white-win）', 12.5, False,
+                       RGBColor(0xCF, 0xD8, 0xE8))]}])
+stagesB = [('输入局面', '--input / --root empty', NAVY2),
+           ('DefenseSearcher', '完整 AND/OR 搜索', BLUE),
+           ('严格传播', 'found / refuted / unknown', GOLD_D),
+           ('候选证书', 'DefenseCertificate', ORANGE),
+           ('导出 Lean', 'def certificate', GREEN)]
+x = 0.62
+for i, (t1, t2, c) in enumerate(stagesB):
+    sp = box(s, x, 4.3, 2.16, 1.1, fill=c, shape=MSO_SHAPE.ROUNDED_RECTANGLE,
+             radius=0.12)
+    text_in(sp, [{'runs': [(t1, 15, True, WHITE)]},
+                 {'runs': [(t2, 11.5, False, WHITE)]}])
+    if i < 4:
+        arrow(s, x + 2.16, 4.85, x + 2.58, 4.85, color=GRAY, width=2.0)
     x += 2.58
 chips = ['置换表 / Zobrist 局面键', '迭代加深', '资源上限', '证书预检（仅诊断）']
 for i, c in enumerate(chips):
-    chip(s, 0.62 + i * 3.13, 3.85, 2.93, 0.68, c, LIGHT, color=INK, size=14)
-note_band(s, 5.05, '整条流水线只产生“候选数据”：任何算法、启发式、缓存'
-                   '都不能直接当结论，最终由 Lean 检查器验证。', h=0.8, size=15.5)
+    chip(s, 0.62 + i * 3.13, 5.75, 2.93, 0.6, c, LIGHT, color=INK, size=13)
+note_band(s, 6.55, '两条流水线都只产生“候选数据”：任何算法、启发式、缓存都不能直接当结论，'
+                   '最终由 Lean 检查器验证。', h=0.55, size=14)
 footer(s, 6)
 
 # ================================================================
@@ -537,11 +565,14 @@ note_band(s, 6.3, '有限搜索失败只表示“本次没找到证据”，绝�
 footer(s, 10)
 
 # ================================================================
-# Slide 11 · Certificate format
+# Slide 11 · Output protocols: two certificate formats
 # ================================================================
 s = new_slide()
-header(s, '输出协议：CompactCertificate', 'Output')
-cards = [
+header(s, '输出协议：两种证书', 'Output · v1')
+sp = box(s, 0.62, 1.3, 12.09, 0.55, fill=NAVY,
+         shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12)
+text_in(sp, [{'runs': [('模式 A · CompactCertificate（强制胜）', 15, True, WHITE)]}])
+cardsA = [
     ('terminal', '胜利叶子', GREEN,
      ['局面真实获胜', '检查器重算胜负', '不信任任何标签']),
     ('proverMove', '目标方回合', BLUE,
@@ -549,22 +580,47 @@ cards = [
     ('opponentMoves', '对手回合', ORANGE,
      ['列出全部合法应手', '每个应手一个子节点', '漏一个 → 整张被拒']),
 ]
-for i, (name, sub, c, lines) in enumerate(cards):
+for i, (name, sub, c, lines) in enumerate(cardsA):
     x = 0.62 + i * 4.13
-    box(s, x, 1.65, 3.93, 0.78, fill=c)
-    text(s, x + 0.3, 1.65, 2.3, 0.78, [{'runs': [(name, 18, True, WHITE)]}],
+    box(s, x, 1.95, 3.93, 0.62, fill=c)
+    text(s, x + 0.3, 1.95, 2.3, 0.62, [{'runs': [(name, 17, True, WHITE)]}],
          anchor=MSO_ANCHOR.MIDDLE)
-    text(s, x + 2.0, 1.65, 1.9, 0.78,
-         [{'runs': [(sub, 13.5, False, WHITE)], 'align': PP_ALIGN.RIGHT}],
+    text(s, x + 2.0, 1.95, 1.9, 0.62,
+         [{'runs': [(sub, 13, False, WHITE)], 'align': PP_ALIGN.RIGHT}],
          anchor=MSO_ANCHOR.MIDDLE)
-    box(s, x, 2.43, 3.93, 2.75, fill=LIGHT,
+    box(s, x, 2.57, 3.93, 1.55, fill=LIGHT,
         shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.06)
     for j, l in enumerate(lines):
-        box(s, x + 0.35, 2.85 + j * 0.75, 0.15, 0.15, fill=GOLD)
-        text(s, x + 0.66, 2.78 + j * 0.75, 3.05, 0.7,
-             [{'runs': [(l, 15.5, False, INK)], 'line_spacing': 1.15}])
-note_band(s, 5.5, '编号规则：数组下标即编号，parent < child，'
-                  '推荐先序布局；允许共享子树。', h=0.85, size=15.5)
+        box(s, x + 0.35, 2.85 + j * 0.42, 0.15, 0.15, fill=GOLD)
+        text(s, x + 0.66, 2.78 + j * 0.42, 3.05, 0.4,
+             [{'runs': [(l, 13.5, False, INK)]}])
+sp = box(s, 0.62, 4.4, 12.09, 0.55, fill=NAVY,
+         shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12)
+text_in(sp, [{'runs': [('模式 B · DefenseCertificate（防守证明）', 15, True, WHITE)]}])
+cardsB = [
+    ('terminal', '终局叶子', GREEN,
+     ['结果为防守方胜或和棋', '攻击方胜的叶子被拒绝']),
+    ('defenderMove', '防守方回合', BLUE,
+     ['选一个保持防守的着法', '指向一个子节点']),
+    ('attackerMoves', '攻击方回合', ORANGE,
+     ['覆盖全部合法应手', '漏一个 → 整张被拒']),
+]
+for i, (name, sub, c, lines) in enumerate(cardsB):
+    x = 0.62 + i * 4.13
+    box(s, x, 5.05, 3.93, 0.62, fill=c)
+    text(s, x + 0.3, 5.05, 2.3, 0.62, [{'runs': [(name, 17, True, WHITE)]}],
+         anchor=MSO_ANCHOR.MIDDLE)
+    text(s, x + 2.0, 5.05, 1.9, 0.62,
+         [{'runs': [(sub, 13, False, WHITE)], 'align': PP_ALIGN.RIGHT}],
+         anchor=MSO_ANCHOR.MIDDLE)
+    box(s, x, 5.67, 3.93, 1.15, fill=LIGHT,
+        shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.06)
+    for j, l in enumerate(lines):
+        box(s, x + 0.35, 5.88 + j * 0.42, 0.15, 0.15, fill=GOLD)
+        text(s, x + 0.66, 5.81 + j * 0.42, 3.05, 0.4,
+             [{'runs': [(l, 13.5, False, INK)]}])
+note_band(s, 6.95, '编号规则：数组下标即编号，parent < child；两种证书都推荐先序布局。',
+          h=0.42, size=13)
 footer(s, 11)
 
 # ================================================================
@@ -576,7 +632,7 @@ box(s, 0.62, 1.75, 5.15, 3.9, fill=RED_L,
     shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.08)
 text(s, 0.95, 2.05, 4.5, 0.55,
      [{'runs': [('不可信：搜索器输出', 19, True, RED)]}])
-for i, t in enumerate(['C++ 搜索器（DFPN / VCF）', '启发式与剪枝',
+for i, t in enumerate(['C++ 搜索器（DFPN / VCF / DefenseSearcher）', '启发式与剪枝',
                        '置换表与各种缓存', 'C++ 预检（仅诊断）']):
     box(s, 0.98, 2.8 + i * 0.68, 0.16, 0.16, fill=RED)
     text(s, 1.3, 2.73 + i * 0.68, 4.3, 0.62,
@@ -585,8 +641,8 @@ box(s, 7.56, 1.75, 5.15, 3.9, fill=GREEN_L,
     shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.08)
 text(s, 7.89, 2.05, 4.5, 0.55,
      [{'runs': [('可信：Lean 检查器', 19, True, GREEN)]}])
-for i, t in enumerate(['checkCertificate', '重算终局胜负',
-                       '验证合法性与子局面', '对手全应手覆盖']):
+for i, t in enumerate(['checkCertificate / checkDefenseCertificateAt', '重算终局胜负',
+                       '验证合法性与子局面', '攻击方全应手覆盖']):
     box(s, 7.92, 2.8 + i * 0.68, 0.16, 0.16, fill=GREEN)
     text(s, 8.24, 2.73 + i * 0.68, 4.3, 0.62,
          [{'runs': [(t, 15.5, False, INK)]}])
@@ -608,8 +664,8 @@ header(s, '已完成：做到什么程度', 'Results')
 steps = [
     ('① 一步胜', True, ['四连局面', '证书检查通过']),
     ('② 两个应手', True, ['AND 根节点', '证书检查通过']),
-    ('③ 有限深度', False, ['参考实现存在', '规模仍然有限']),
-    ('④ 导出复检', True, ['C++ 导出 Lean 源码', '局部局面复检通过']),
+    ('③ 防御证书链', True, ['--prove 模式', 'DefenseCertificate + 检查器']),
+    ('④ 中盘和棋', True, ['9 个局面', 'StandardDraw 定理']),
 ]
 x = 0.62
 for i, (t, done, lines) in enumerate(steps):
@@ -633,7 +689,7 @@ for i, (t, done, lines) in enumerate(steps):
     if i < 3:
         arrow(s, x + 2.72, 2.06, x + 3.18, 2.06, color=GRAY, width=2.2)
     x += 3.18
-note_band(s, 5.9, '全部成果以 Lean 复检通过为准：一步胜 / 双应手 / 开四 VCF。')
+note_band(s, 5.9, '全部成果以 Lean 复检通过为准：一步胜 / 双应手 / 防御证书链 / 中盘和棋。')
 footer(s, 13)
 
 # ================================================================
@@ -850,9 +906,12 @@ NOTES = [
     '对手回合是 AND 节点，每个合法应手都要有胜子树，漏一个就失败。叶子必须是真实胜局，'
     '和棋、输棋、搜索耗尽都不算赢。',
     # 6 整体架构
-    '搜索器用 C++ 实现：输入局面后，DFPN 主搜索负责证明数搜索，VCF 快攻负责连续冲四'
-    '检测，产出候选证书，再导出成 Lean 源码。中间还有置换表、迭代加深、资源上限这些'
-    '组件。注意：整条流水线产出的都只是候选数据。',
+    '搜索器用 C++ 实现，有两条流水线。模式 A 是强制胜搜索：输入局面后，DFPN 主搜索'
+    '负责证明数搜索，VCF 快攻负责连续冲四检测，产出 CompactCertificate 候选证书，'
+    '再导出成 Lean 源码。模式 B 是防守证明：用 DefenseSearcher 做完整 AND/OR 搜索，'
+    '目标是对给定的攻击方证明防守方能阻止其获胜，状态严格区分 found、refuted 和 '
+    'unknown，产出 DefenseCertificate。两条流水线都有置换表、迭代加深、资源上限等'
+    '组件，产出的都只是候选数据。',
     # 7 DFPN
     'DFPN 是核心算法。每个节点记录两个数：证明数 pn，证明它必胜还要展开多少节点；'
     '反证数 dn，证明它必败还要多少节点。每次优先展开 pn 或 dn 最小的节点，把预算花在'
@@ -870,16 +929,20 @@ NOTES = [
     '找到候选证书，其余都是没找到。最关键的纪律：搜不到不等于必败，只能说本次资源下'
     '没有找到证据，绝不能写成和棋或必败。',
     # 11 证书格式
-    '搜索器的输出是 CompactCertificate，三种节点：terminal 是胜利叶子，proverMove 是'
-    '目标方选一个着法，opponentMoves 是列出对手全部应手。编号规则是父节点必须小于'
-    '子节点，自环和回边一律拒绝。',
+    '搜索器有两种输出协议。模式 A 的 CompactCertificate 有三种节点：terminal 是胜利'
+    '叶子，proverMove 是目标方选一个着法，opponentMoves 是列出对手全部应手。'
+    '模式 B 的 DefenseCertificate 对应防守语义：terminal 叶子必须是防守方胜或和棋，'
+    'defenderMove 是防守方选一个保持防守的着法，attackerMoves 是覆盖攻击方的全部'
+    '合法应手，漏一个就整张被拒。编号规则都是父节点小于子节点，自环和回边一律拒绝。',
     # 12 可信边界
     '这是整个设计最核心的地方。左边这些——搜索算法、启发式、剪枝、缓存、C++ 预检——'
-    '全部不可信，只生成候选。右边 Lean 检查器把每个节点重新检查：重算终局、验证合法'
-    '着法、验证子局面、检查对手全覆盖，通过之后才得到 CanForceWin 定理。',
+    '全部不可信，只生成候选。右边 Lean 检查器把每个节点重新检查：checkCertificate 和 '
+    'checkDefenseCertificateAt 重算终局、验证合法着法、验证子局面、检查攻击方全覆盖，'
+    '通过之后才得到 CanForceWin 或 CanPreventWin 定理。',
     # 13 已完成
-    '验收按四步走。一步胜、两个应手、导出复检三步已经打通，证书都在 Lean 里复检通过；'
-    '有限深度搜索有参考实现，但规模还比较有限。整体上框架是完整的。',
+    '验收按四步走。一步胜、两个应手、防御证书链和中盘和棋四步都已经打通：'
+    '防御证书链包括 --prove 模式、DefenseCertificate 和 Lean 检查器，中盘和棋'
+    '给出了 9 个机器验证的 StandardDraw 局面。整体上框架是完整的。',
     # 14 和棋章节封面
     '接下来进入第四个部分：9 个机器验证的 7×7 和棋局面。核心纪律不变：'
     'C++ 搜索器只负责找候选证书，是否成立完全由 Lean 检查器决定。',
@@ -926,12 +989,14 @@ NOTES = [
 for slide, note in zip(prs.slides, NOTES):
     slide.notes_slide.notes_text_frame.text = note
 
-OUT = r'C:\Users\lenovo\Desktop\GomokuFormalization\五子棋项目阶段汇报.pptx'
+# Output next to the repository root (repo copy: <repo>/五子棋项目阶段汇报.pptx).
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT = os.path.join(REPO_ROOT, '五子棋项目阶段汇报.pptx')
 try:
     prs.save(OUT)
     print('saved:', OUT, 'slides =', len(prs.slides._sldIdLst))
 except PermissionError:
-    OUT = r'C:\Users\lenovo\Desktop\GomokuFormalization\五子棋项目阶段汇报_新版.pptx'
+    OUT = os.path.join(REPO_ROOT, '五子棋项目阶段汇报_新版.pptx')
     prs.save(OUT)
     print('original file locked; saved as:', OUT,
           'slides =', len(prs.slides._sldIdLst))
