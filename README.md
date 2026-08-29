@@ -22,6 +22,8 @@ first player = Black
 - `Gomoku.Game`：策略与 `CanForceWin` 博弈语义。
 - `Gomoku.Tactics`：立即胜着、活三、活四和双威胁定义及定理。
 - `Gomoku.Certificate`：`CompactCertificate`、全局/局部检查器和 soundness 定理。
+- `Gomoku.Stealing`：纯策略级证明——策略偷换（strategy stealing），从空棋盘证明
+  `BlackCanPreventWhiteWin initialPosition`（先手至少和棋），不依赖搜索证书。
 - `Gomoku.Search`：49 点行主序坐标、候选生成、有限深度搜索与证书转换。
 - `Gomoku.Bounded`：可执行的有界 AND/OR 博弈语义。
 - `Gomoku.Engine`：带资源上限、缓存和威胁排序的 Lean 候选搜索引擎。
@@ -46,7 +48,9 @@ y = index / 7
 `none`、`depthLimit` 或 `nodeLimit` 只表示本次没找到证书，不是和棋定理。
 
 当前没有导入从 7×7 空棋盘开始的完整策略证书，因此项目不宣称
-`initial_black_wins` 或完整和棋定理。
+`initial_black_wins` 或完整和棋定理。但 `Gomoku.Stealing` 通过纯策略级
+（策略偷换）论证证明了空棋盘上黑方（先手）能阻止白方获胜：
+`BlackCanPreventWhiteWin initialPosition`（先手至少和棋，不等同于先手必胜）。
 
 旧的 5×5--8×8 参数化实验、结果日志和重复 smoke 脚本已删除；仓库只保留
 固定 7×7 主程序及其最小验收测试。
