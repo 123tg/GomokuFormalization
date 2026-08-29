@@ -4,7 +4,32 @@
 > 检查的证明证书,最终证明 `WhiteCanPreventBlackWin initialPosition`、
 > `BlackCanPreventWhiteWin initialPosition` 与 `StandardDraw initialPosition`。
 > 当前状态:防御证书全链路(Lean checker + soundness + 负测试 + C++ 导出)已完成并通过
-> 验证;空棋盘三个定理尚未完成。
+> 验证;Pairing.lean 配对策略 soundness 已形式化;Stealing.lean 策略偷取已证明
+> `BlackCanPreventWhiteWin initialPosition`。空棋盘剩 `WhiteCanPreventBlackWin
+> initialPosition` 与 `StandardDraw initialPosition` 两个定理尚未完成。
+
+## 〇、和棋性调查结论(2026-08-30):7,7,5 确实是和棋
+
+文献证据(同一研究组、被引权威期刊):
+
+- **ICGA Journal 2018**(Hsu, Ko, Hsueh, Wu, *Solving 7,7,5-game and 8,8,5-game*,
+  DOI 10.3233/ICG-180061)摘要原文:"This paper solves 7,7,5-game and 8,8,5-game
+  as draws."——即 7,7,5 与 8,8,5 均被证明为**和棋**;
+- **TCS 2020**(Hsu, Ko, Chen, Wei, Hsueh, Wu, *On solving the 7,7,5-game and the
+  8,8,5-game*, DOI 10.1016/j.tcs.2020.02.023):用 AND/OR 搜索 + 三种剪枝 + 配对策略
+  把 7,7,5 的证明加速到 **2.5 秒**;8,8,5 首次被证明和棋(17.4 小时)。
+
+自有实证(与文献一致):
+
+| 尝试 | 结果 |
+|---|---|
+| DFPN 强制胜 black / white | 预算内均未找到任何一方的强制胜 |
+| 根 pairing(静态全覆盖) | 500M 节点完整搜索否定(与文献一致:文献用的是**动态**配对,不是根静态配对) |
+| solve_775 三值 AND/OR(对称 + 后期配对剪枝) | 运行中(60M 节点版:unknown) |
+
+结论:**标准规则下 7×7 五子棋为空棋盘和棋,`StandardDraw initialPosition` 是正确
+目标**。文献证明方法的关键是"搜索树 + 局面相关配对叶"的混合证明——这与本项目
+"小博弈树 + pairing 叶"的混合证书路线完全同构。
 
 困难分三类:**本质性困难(数学规模)**、**信任边界问题(不能走捷径)**、
 **工程/形式化困难(可解决,在推进中)**。
