@@ -21,6 +21,7 @@ import Gomoku.Generated.Draw7x7s6
 import Gomoku.Generated.Draw7x7s7
 import Gomoku.Generated.Draw7x7s8
 import Gomoku.Generated.Draw7x7s9
+import Gomoku.DrawGalleryAudit
 import Gomoku.RuleAudit
 import Gomoku.DefenseAudit
 
