@@ -48,7 +48,7 @@ DRAW_POSITIONS = [
     ('Draw7x7s8.lean', 'seed 8', 'Draw7x7s8.png'),
     ('Draw7x7s9.lean', 'seed 9', 'Draw7x7s9.png'),
 ]
-TOTAL = 20
+TOTAL = 23
 
 prs = Presentation()
 prs.slide_width = Inches(13.333)
@@ -193,7 +193,11 @@ def header(slide, title, kicker=None):
                'align': PP_ALIGN.RIGHT}], anchor=MSO_ANCHOR.MIDDLE)
 
 
-def footer(slide, idx):
+def footer(slide, idx=None):
+    # Auto page number: use the actual slide position in the deck so that
+    # inserting slides never requires manual renumbering.
+    if idx is None:
+        idx = len(prs.slides._sldIdLst)
     text(slide, 0.62, 7.12, 6, 0.3,
          [{'runs': [('Gomoku Formalization · 项目阶段汇报（穿插版）', 9, False, GRAY)]}])
     text(slide, 11.9, 7.12, 0.85, 0.3,
@@ -229,6 +233,62 @@ def issue_card(slide, x, y, w, h, title, desc):
          [{'runs': [(title, 19, True, RED)]}])
     text(slide, x + 0.45, y + 1.0, w - 0.8, 1.0,
          [{'runs': [(desc, 15, False, INK)], 'line_spacing': 1.25}])
+
+
+# ---------------- code block rendering ----------------
+CODE_BG   = RGBColor(0x14, 0x1A, 0x2B)
+CODE_LINE = RGBColor(0xE8, 0xEC, 0xF4)
+CODE_KEY  = RGBColor(0x7D, 0xC4, 0xFF)
+CODE_CMT  = RGBColor(0x8A, 0x99, 0xB4)
+CODE_STR  = RGBColor(0xA5, 0xE0, 0x8A)
+CODE_MONO = 'Consolas'
+
+
+def code_block(slide, x, y, w, h, lines, caption=None, size=12.5):
+    """Render a dark code block.  Each line is (text, kind) where kind is
+    'code' | 'key' | 'cmt' | 'str' — or just a plain string."""
+    box(slide, x, y, w, h, fill=CODE_BG, line=RGBColor(0x3B, 0x59, 0x98),
+        lw=1.0, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.04)
+    y0 = y + 0.18
+    if caption:
+        cap = box(slide, x, y, w, 0.4, fill=NAVY2,
+                  shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.1)
+        text_in(cap, [{'runs': [(caption, 12, True, WHITE)]}])
+        y0 = y + 0.5
+    line_h = size / 72.0 * 1.42
+    tb = slide.shapes.add_textbox(Inches(x + 0.25), Inches(y0),
+                                  Inches(w - 0.5), Inches(h - (y0 - y) - 0.12))
+    tf = tb.text_frame
+    tf.word_wrap = False
+    first = True
+    for item in lines:
+        if isinstance(item, str):
+            txt, kind = item, 'code'
+        else:
+            txt, kind = item
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        first = False
+        run = p.add_run()
+        run.text = txt
+        f = run.font
+        f.name = CODE_MONO
+        f.size = Pt(size)
+        f.bold = (kind == 'key')
+        if kind == 'cmt':
+            f.color.rgb = CODE_CMT
+            f.italic = True
+        elif kind == 'key':
+            f.color.rgb = CODE_KEY
+        elif kind == 'str':
+            f.color.rgb = CODE_STR
+        else:
+            f.color.rgb = CODE_LINE
+        rPr = run._r.get_or_add_rPr()
+        ea = rPr.find(qn('a:ea'))
+        if ea is None:
+            ea = etree.SubElement(rPr, qn('a:ea'))
+        ea.set('typeface', FONT)
+    return tb
 
 
 def three_positions_slide(page, title, kicker, triple, intro):
@@ -399,6 +459,44 @@ for i, (t, c) in enumerate(bulletsB):
          anchor=MSO_ANCHOR.MIDDLE)
 note_band(s, 6.35, '两种语义都只生成候选数据：搜索器可以犯错，检查器不放错。')
 footer(s, 5)
+
+# ================================================================
+# Slide 6 · Code: CanPreventWin semantics (Lean)
+# ================================================================
+s = new_slide()
+header(s, '代码对照 ①：防守语义 CanPreventWin', 'Gomoku/Defense.lean')
+text(s, 0.62, 1.18, 12.0, 0.4,
+     [{'runs': [('目标 B 在 Lean 中的归纳定义：攻击方获胜的终局没有任何闭合路径。',
+                 14.5, False, GRAY)]}])
+code_block(s, 0.62, 1.75, 12.09, 4.35, [
+    ('inductive CanPreventWin (defender : Player) : Position → Prop where', 'key'),
+    ('  | terminal {s : Position} (h : terminal s = some (winner defender)) :', 'code'),
+    ('      CanPreventWin defender s', 'code'),
+    ('  | draw {s : Position} (h : terminal s = some .draw) :', 'code'),
+    ('      CanPreventWin defender s', 'code'),
+    ('  | defenderMove {s : Position} (hterm : terminal s = none)', 'code'),
+    ('      (hturn : s.turn = defender) (m : Coord) (hm : legalMove s m)', 'code'),
+    ('      (hchild : CanPreventWin defender (play s m)) : CanPreventWin defender s', 'code'),
+    ('  | attackerMoves {s : Position} (hterm : terminal s = none)', 'code'),
+    ('      (hturn : s.turn = Player.other defender)', 'code'),
+    ('      (children : ∀ m, legalMove s m → CanPreventWin defender (play s m)) :', 'code'),
+    ('      CanPreventWin defender s', 'code'),
+    ('-- 终局为和棋或防守方获胜时闭合；防守方回合为存在量词，攻击方回合为全称量词', 'cmt'),
+], caption='def CanPreventWin — 语义与 slide 5 右栏一一对应', size=12.5)
+ann = [
+    ('terminal / draw', '叶子：防守方胜 或 和棋', GREEN),
+    ('defenderMove', '防守方回合：只需一个合法着法', BLUE),
+    ('attackerMoves', '攻击方回合：∀ m 覆盖全部合法应手', RGBColor(0xD9, 0x7B, 0x29)),
+]
+for i, (k, d, c) in enumerate(ann):
+    x = 0.62 + i * 4.13
+    box(s, x, 6.35, 3.93, 0.55, fill=LIGHT,
+        shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.12)
+    text(s, x + 0.25, 6.4, 1.95, 0.45, [{'runs': [(k, 13.5, True, c)]}],
+         anchor=MSO_ANCHOR.MIDDLE)
+    text(s, x + 2.15, 6.4, 1.75, 0.45,
+         [{'runs': [(d, 10.5, False, INK)]}], anchor=MSO_ANCHOR.MIDDLE)
+footer(s, 6)
 
 # ================================================================
 # Slide 6 · Two-mode searcher architecture
@@ -611,7 +709,38 @@ note_band(s, 6.6, '编号规则：数组下标即编号，parent < child；两�
 footer(s, 11)
 
 # ================================================================
-# Slide 12 · Trust boundary
+# Slide 12 · Code: DefenseCertificate structure + checker (Lean)
+# ================================================================
+s = new_slide()
+header(s, '代码对照 ②：证书数据结构与检查器', 'Gomoku/Defense.lean')
+text(s, 0.62, 1.18, 12.0, 0.4,
+     [{'runs': [('可序列化的扁平证书节点 + 逐节点布尔检查器 —— 检查器不信任搜索器，'
+                 '对每个节点重新计算。', 14.5, False, GRAY)]}])
+code_block(s, 0.62, 1.7, 12.09, 3.1, [
+    ('inductive DefenseCertificateNode where', 'key'),
+    ('  | terminal (position : Position) (outcome : Outcome)', 'code'),
+    ('  | defenderMove (position : Position) (move : Coord) (child : Nat)', 'code'),
+    ('  | attackerMoves (position : Position) (children : Array (Coord × Nat))', 'code'),
+    ('', 'code'),
+    ('structure DefenseCertificate where', 'key'),
+    ('  defender : Player   -- 防守方：white 或 black', 'code'),
+    ('  root : Nat          -- 根节点下标', 'code'),
+    ('  nodes : Array DefenseCertificateNode', 'code'),
+], caption='DefenseCertificate — 模式 B 的证书格式', size=12)
+code_block(s, 0.62, 4.95, 12.09, 1.95, [
+    ('def checkDefenseNode (defender : Player) (size : Nat) : DefenseCertificateNode → Bool', 'key'),
+    ('  | .terminal s out =>', 'code'),
+    ('      decide (terminal s = some out) &&', 'code'),
+    ('        (decide (out = winner defender) || decide (out = .draw))', 'code'),
+    ('  | .attackerMoves s children =>', 'code'),
+    ('      decide (terminal s = none) && decide (s.turn = Player.other defender) &&', 'code'),
+    ('        allRefsValid size children && allMovesLegal s children &&', 'code'),
+    ('        allLegalMovesCovered s children && movesDistinct children', 'code'),
+], caption='checkDefenseNode — 攻击方全应手覆盖是硬约束', size=11.5)
+footer(s, 12)
+
+# ================================================================
+# Slide 13 · Trust boundary
 # ================================================================
 s = new_slide()
 header(s, '设计核心：可信边界', 'Trust Boundary')
@@ -663,7 +792,38 @@ three_positions_slide(
     '证书只是候选：Lean 检查器逐节点重算通过后，才能组合出 StandardDraw 定理。')
 
 # ================================================================
-# Slide 16 · Verification chain (draw example threaded here)
+# Slide 16 · Code: from certificates to the draw theorem
+# ================================================================
+s = new_slide()
+header(s, '代码对照 ③：从证书到 StandardDraw 定理', 'Gomoku/Generated/Draw7x7.lean')
+text(s, 0.62, 1.18, 12.0, 0.4,
+     [{'runs': [('C++ 生成的 Lean 文件：检查器验证两张证书，soundness 定理组合出和棋。',
+                 14.5, False, GRAY)]}])
+code_block(s, 0.62, 1.7, 12.09, 2.6, [
+    ('theorem draw7x7WhiteChecked :', 'key'),
+    ('    checkDefenseCertificateAt draw7x7RootPosition', 'code'),
+    ('        draw7x7WhiteDefenseCertificate = true := by', 'code'),
+    ('  native_decide   -- 机器重算：白防黑证书逐节点通过', 'cmt'),
+    ('', 'code'),
+    ('theorem draw7x7BlackChecked :', 'key'),
+    ('    checkDefenseCertificateAt draw7x7RootPosition', 'code'),
+    ('        draw7x7BlackDefenseCertificate = true := by', 'code'),
+    ('  native_decide   -- 机器重算：黑防白证书逐节点通过', 'cmt'),
+], caption='两张证书的检查（Gomoku/Generated/Draw7x7.lean）', size=12)
+code_block(s, 0.62, 4.45, 12.09, 2.35, [
+    ('theorem draw7x7StandardDraw : StandardDraw draw7x7RootPosition :=', 'key'),
+    ('  standardDraw_of_mutualDefense', 'code'),
+    ('    draw7x7WhitePrevents   -- WhiteCanPreventBlackWin draw7x7RootPosition', 'cmt'),
+    ('    draw7x7BlackPrevents   -- BlackCanPreventWhiteWin draw7x7RootPosition', 'cmt'),
+    ('', 'code'),
+    ('-- 信任边界：搜索器只提供证书数据；定理由 Lean 内核 + soundness 证明保证', 'cmt'),
+], caption='组合定理（依赖 Defense.lean 的 soundness）', size=12)
+note_band(s, 6.95, '检查器重算 + soundness 定理 = 不信任搜索器也能得到真定理。',
+          h=0.42, size=12.5)
+footer(s, 16)
+
+# ================================================================
+# Slide 17 · Verification chain (draw example threaded here)
 # ================================================================
 s = new_slide()
 header(s, '验证链：从证书到 StandardDraw', 'Trust Chain')
@@ -808,13 +968,17 @@ text(s, 0.9, 5.3, 11.5, 0.55,
 # ---------------- speaker notes ----------------
 NOTES = [
     '这一版把 9 个和棋局面穿插进技术主线，而不是单独一章：先讲两种搜索语义，'
-    '再讲双模式搜索器、两种证书协议与可信边界，然后用三页实战局面和验证链收尾。',
+    '再讲双模式搜索器、两种证书协议与可信边界，然后用三页实战局面和验证链收尾；'
+    '并在语义、证书、定理三处嵌入真实 Lean 代码对照。',
     '目录按主题流动：语义、双模式、证书与边界、实战局面、不足与总结。',
     '项目用 Lean 4 形式化固定规则的五子棋：7×7、五连即胜、黑先、无禁手。',
     '为什么需要搜索器：博弈树太大，程序会犯错，所以分工：搜索器找候选，Lean 出定理。',
     '这一页是穿插的关键：两种目标并排。目标 A 强制胜：我方回合 OR、对手回合 AND；'
     '目标 B 防守证明：防守方选一步、攻击方全应手覆盖，叶子只能是防守方胜或和棋。'
     '和棋局面就是目标 B 的产物。',
+    '代码对照一：CanPreventWin 的归纳定义。注意三个构造子：terminal 和 draw 是叶子，'
+    'defenderMove 是防守方回合的存在量词，attackerMoves 是攻击方回合的全称量词——'
+    '攻击方获胜的终局没有任何构造子，这正是“防守证明”的数学含义。',
     '双模式架构：模式 A 是 DFPN + VCF 强制胜，模式 B 是 DefenseSearcher 完整 AND/OR '
     '防守证明，状态严格区分 found、refuted、unknown。两条流水线都只出候选。',
     'DFPN 用证明数 pn 与反证数 dn 优先展开最有希望的分支。',
@@ -824,11 +988,17 @@ NOTES = [
     '绝不能写成和棋或必败。',
     '两种证书协议：CompactCertificate 服务强制胜，DefenseCertificate 服务防守证明；'
     'DefenseCertificate 的终局叶子只接受防守方胜或和棋。',
+    '代码对照二：DefenseCertificate 的节点结构与检查器。检查器对攻击方节点要求'
+    'allLegalMovesCovered——全部合法应手必须被覆盖，漏一个就整张被拒；'
+    '终局叶子只接受防守方胜或和棋。',
     '可信边界：左边全部不可信只出候选，右边 Lean 检查器逐节点重算，'
     '通过才得到 CanForceWin 或 CanPreventWin 定理。',
     '实战第一页：前三个和棋局面。每个局面每个长度 5 窗口都含黑白两子。',
     '实战第二页：中间三个局面，都由 DefenseSearcher 生成两张防守证书。',
     '实战第三页：最后三个局面。证书只是候选，Lean 检查通过才是定理。',
+    '代码对照三：Draw7x7.lean 里两张证书的检查用 native_decide 机器重算，'
+    'standardDraw_of_mutualDefense 把两张防守证书组合成 StandardDraw 定理——'
+    '这就是“搜索器只出数据，定理由 Lean 内核保证”的直接体现。',
     '验证链：构造局面、C++ 找证书、Lean 重算、组合出 StandardDraw；五项断言 9/9 通过。',
     '汇总表：九个局面的两张证书全部通过检查，每个都证明了 StandardDraw。',
     '不足一：空棋盘开局求解和空棋盘和棋都未完成，目前只有中盘局面。',
