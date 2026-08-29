@@ -5,6 +5,7 @@ import Gomoku.Game
 import Gomoku.Tactics
 import Gomoku.Certificate
 import Gomoku.Defense
+import Gomoku.Pairing
 import Gomoku.Search
 import Gomoku.Bounded
 import Gomoku.Engine
