@@ -201,6 +201,20 @@ theorem exists_legalMove_of_terminal_none {s : Position}
   rcases hempty with ⟨c, hc⟩
   exact ⟨c, ⟨not_isTerminal_of_terminal_none h, hc⟩⟩
 
+/- A position has no legal continuation exactly when the game is already
+   terminal.  This packages the two directions used throughout the search and
+   certificate proofs. -/
+theorem no_legalMove_iff_isTerminal {s : Position} :
+    (∀ c, ¬ legalMove s c) ↔ isTerminal s := by
+  constructor
+  · intro h
+    by_contra hnot
+    obtain ⟨c, hc⟩ := exists_legalMove_of_terminal_none
+      (terminal_none_of_not_isTerminal hnot)
+    exact h c hc
+  · intro hs c
+    exact terminal_no_legal hs c
+
 theorem initial_not_terminal : ¬ isTerminal initial := by
   intro h
   rcases h with h | h | h
@@ -309,6 +323,40 @@ theorem reachable_count_invariant {s : Position} (h : Reachable s) :
             simpa [countBlack, countWhite, hturn] using ih
           exact ih'
 
+/- For reachable positions, the turn can be recovered from the two stone
+   counts.  These converse forms are useful when importing positions from an
+   external searcher: matching counts are not merely necessary, but also
+   identify whose turn it is. -/
+theorem reachable_turn_black_iff_count {s : Position} (h : Reachable s) :
+    s.turn = .black ↔ countBlack s = countWhite s := by
+  constructor
+  · intro hturn
+    have hi := reachable_count_invariant h
+    simpa [hturn] using hi
+  · intro hcount
+    cases hturn : s.turn with
+    | black => rfl
+    | white =>
+        have hi := reachable_count_invariant h
+        have hi' : countBlack s = countWhite s + 1 := by
+          simpa [hturn] using hi
+        omega
+
+theorem reachable_turn_white_iff_count {s : Position} (h : Reachable s) :
+    s.turn = .white ↔ countBlack s = countWhite s + 1 := by
+  constructor
+  · intro hturn
+    have hi := reachable_count_invariant h
+    simpa [hturn] using hi
+  · intro hcount
+    cases hturn : s.turn with
+    | black =>
+        have hi := reachable_count_invariant h
+        have hi' : countBlack s = countWhite s := by
+          simpa [hturn] using hi
+        omega
+    | white => rfl
+
 theorem reachable_not_both_winners {s : Position} (h : Reachable s) :
     ¬ (hasAtLeastFive s.board .black ∧ hasAtLeastFive s.board .white) := by
   cases h with
@@ -317,6 +365,46 @@ theorem reachable_not_both_winners {s : Position} (h : Reachable s) :
       exact initial_not_terminal (Or.inl hboth.1)
   | step _ hlegal =>
       exact play_not_both_winners hlegal
+
+/- In a reachable game, a winning player must have made the last move.  The
+   current turn is therefore the opponent of the recorded winner.  This is
+   stronger than the stone-count invariant: it connects terminal ownership to
+   the move that created the winning line. -/
+theorem reachable_winner_turn {s : Position} (hs : Reachable s)
+    {p : Player} (hwin : terminal s = some (winner p)) :
+    s.turn = p.other := by
+  induction hs with
+  | initial =>
+      have hnone : terminal Position.initial = none :=
+        terminal_none_of_not_isTerminal initial_not_terminal
+      rw [hnone] at hwin
+      simp at hwin
+  | @step prev c hprev hlegal _ih =>
+      have hline : hasAtLeastFive (play prev c).board p :=
+        terminal_winner_hasAtLeastFive hwin
+      cases hturn : prev.turn with
+      | black =>
+          have hchildturn : (play prev c).turn = .white := by
+            simp [play, hturn]
+          cases p with
+          | black => exact hchildturn
+          | white =>
+              have hprevline : hasAtLeastFive prev.board .white := by
+                apply hasAtLeastFive_of_place_other
+                  (p := .white) (q := .black) (r := c) (by decide)
+                simpa [play, hturn] using hline
+              exact (hlegal.1 (Or.inr (Or.inl hprevline))).elim
+      | white =>
+          have hchildturn : (play prev c).turn = .black := by
+            simp [play, hturn]
+          cases p with
+          | black =>
+              have hprevline : hasAtLeastFive prev.board .black := by
+                apply hasAtLeastFive_of_place_other
+                  (p := .black) (q := .white) (r := c) (by decide)
+                simpa [play, hturn] using hline
+              exact (hlegal.1 (Or.inl hprevline)).elim
+          | white => exact hchildturn
 
 end Position
 

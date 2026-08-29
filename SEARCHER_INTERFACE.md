@@ -32,6 +32,20 @@ abbrev Searcher := SearchConfig -> Option CompactCertificate
 
 `none` **不表示数学上不存在必胜策略**，也不表示目标方必败。它只表示本次搜索没有给出足够的证据。
 
+### 落子后的终局分类
+
+Lean 侧提供 `terminalAfterMoveFast s m` 作为搜索器实现可复用的单步分类函数。它只是一个
+总计算：非法坐标返回 `none`；合法落子形成五连时返回当前落子方胜利；没有五连但填满
+棋盘时返回和棋；否则返回 `none`。在父局面 `terminal s = none` 且 `legalMove s m` 时，
+定理 `terminalAfterMoveFast_eq_terminal` 保证它与 `terminal (play s m)` 完全一致。外部
+搜索器可以采用同样的分类逻辑，但外部结果仍必须交给证书检查器，不能只凭这个函数跳过
+边合法性、对手分支覆盖或根局面检查。
+
+`EngineStats.terminalChecks` 和 `EngineStats.candidateMoves` 是 Lean 引擎提供的可比性能
+指标。它们分别表示实际进行的终局分类次数，以及交给递归扫描器的候选着法数量；缓存
+命中不会重复计数。外部 C++ 搜索器应至少记录等价的节点数、证书节点数和检查时间，
+但这些数字只能用于性能比较，不能替代证书检查。
+
 证书定义为：
 
 ```lean
@@ -147,6 +161,16 @@ CanForceWin initialPosition .black
 
 `checkLocalCertificateAt s c` 复用完全相同的节点、边、索引和对手覆盖检查，但允许根节点是任意指定局面。它适合测试局部战术、两层证书和小棋盘实验；局部证书不能因此被解释为空棋盘的全局证明。
 
+主线还提供了 `boardFromStones`、`positionFromStones` 和
+`checkExternalLocalCertificate`。它们固定了“外部程序用棋子数组描述根局面”的
+最小适配格式。数组本身是不可信输入，折叠得到的棋盘会直接交给
+`checkLocalCertificateAt`；因此错误的子局面、非法着法、错误终局标签仍会被拒绝。
+`Gomoku.InteropAudit` 中的通过/拒绝样例与队友 C++ 导出的文件形状一致。
+如果导出器承诺每个占用坐标只出现一次，可以使用
+`checkExternalLocalCertificateStrict`；它先检查数组坐标去重，再执行相同的证书检查。
+普通 `checkExternalLocalCertificate` 保留为兼容接口，但会像 `Board.place` 一样对重复记录
+采取后写覆盖，因此不应把它当作外部历史合法性的证明。
+
 ## 6. 坐标与棋盘表示
 
 正式坐标是：
@@ -183,22 +207,106 @@ allCoords : Array Coord
 
 当前仓库中的 `searchCandidateTree`、`candidateTreeCertificate`、`checkedDepthCertificateFor` 是有限深度参考实现。它们不是完整 15x15 求解器，也不能绕过检查器。
 
+主线还包含 `Gomoku.Engine`。它提供带节点预算、迭代加深、威胁排序、目标方强制防守剪枝和
+精确局面缓存的可执行候选搜索。它仍然只生成 `CandidateTree`；`runCheckedEngine` 会把结果
+编译成 `CompactCertificate`，并通过 `checkLocalCertificateAt` 后才允许使用
+`runCheckedEngine_sound`。当设置了正的 `maxProverMoves` 或资源预算耗尽时，返回结果是不完备的，
+不能把 `depthLimit`、`nodeLimit` 或 `none` 当成数学上的必败证明。
+
+引擎还证明了 `mem_engineProverCandidateMoves_legal`：即使候选经过威胁分组或宽度截断，
+其中每个留下的坐标仍满足当前局面的 `legalMove`。这是候选列表的安全不变量，不表示
+选择性搜索已经完备。
+
+有限深度参考实现还提供了一个诊断入口：
+
+```lean
+checkedDepthResultFor fuel position target
+```
+
+它把结果分成三类：
+
+- `noCandidate`：给定燃料下没有找到候选策略树；
+- `rejected certificate`：找到了候选树，但编译后的证书没有通过 Lean 检查；
+- `accepted certificate`：证书通过检查，可以使用 `checkedDepthResultFor_sound` 得到
+  `CanForceWin position target`。
+
+Lean 中的 `checkedDepthResultFor_accepted_iff`、`checkedDepthResultFor_noCandidate_iff` 和
+`checkedDepthResultFor_rejected_iff` 对这三种状态给出精确定义；其中只有 `accepted` 能推出
+数学上的强制获胜。
+
+这三类状态只描述本次有限搜索的输出。尤其是 `noCandidate`，不能解释为“目标方没有必胜策略”；
+它可能只是搜索深度、时间或内存不够。
+
+## 8. 有限语义基准与搜索器结果的关系
+
+`Gomoku.Bounded` 还提供了独立的参考计算：
+
+```lean
+boundedCanForceWin fuel position target
+```
+
+它不使用搜索器的启发式，只按给定步数检查目标方节点的“存在一个成功着法”和对手节点的
+“所有合法应手都成功”。Lean 已证明：返回 `true` 一定可以推出 `CanForceWin`；反方向在
+`Board.emptyCount position.board + 1` 这个理论上限内也成立。这个定义适合审查搜索器，
+但在完整 15×15 棋盘上通常不可直接穷举。
+
+另外，`boundedCanForceWin_terminal_iff` 统一刻画了所有燃料下的终局结果，
+`boundedCanForceWin_mono` 和 `boundedCanForceWin_mono_of_le` 证明：若某个深度返回
+`true`，再增加一层或任意更多深度仍返回 `true`。
+因此迭代加深可以安全地保留已找到的成功结果；这不改变 `noCandidate` 或深度截止状态的
+含义，也不把有限搜索失败解释成必败。
+
+`boundedCanForceWin`、`searchCandidateTree` 和 `runCheckedEngine` 的职责不同：
+
+| 组件 | 作用 | 是否直接产生定理 |
+|---|---|---|
+| `boundedCanForceWin` | 小深度的完整 AND/OR 参考计算 | 只有返回 `true` 时，通过 `boundedCanForceWin_sound` 得到定理 |
+| `searchCandidateTree` | 生成候选策略树，可使用排序和缓存 | 否；候选树必须经过证书检查 |
+| `runCheckedEngine` | 带节点预算的候选搜索并立即调用检查器 | 只有 `found` 且证书通过时，通过 `runCheckedEngine_sound` 得到定理 |
+
+因此，搜索器返回 `none`、`noCandidate`、`depthLimit` 或 `nodeLimit` 都只是“本次资源下没有
+找到证书”。它们不能被写成“不存在必胜策略”。
+
+若候选证书已经通过 `checkedDepthCertificateFor` 或
+`checkedDepthCertificateForCached`，并且调用者另外知道
+`Board.emptyCount position.board + 1 ≤ fuel`，可以使用
+`checkedDepthCertificateFor_bounded` 或 `checkedDepthCertificateForCached_bounded`，
+把该结果连接到独立的 `boundedCanForceWin fuel position target = true`。这只是
+“理论上足够深度”的充分性桥接；它不把较浅搜索的 `none` 解释为必败，也不声称启发式搜索
+在所有深度上都完备。
+
 ## 8. 缓存约束
 
-当前 `SearchMemo` 是适配接口，不是已经完成的高性能搜索器。缓存键至少必须包含：
+当前 `SearchMemo` 已接入 Lean 侧的有限深度递归参考搜索，但还不是完整的高性能搜索器。缓存键至少必须包含：
 
 - 剩余深度/燃料；
 - 目标玩家；
 - 完整局面（包括轮次）。
 
+`SearchMemo` 使用的 `SearchKey` 正好包含上述三项。`Gomoku.Engine` 的候选策略还会受
+选择性剪枝、威胁排序和宽度限制影响，因此 `EngineMemo` 使用更强的 `EngineSearchKey`，
+在 `SearchKey` 之外再保存完整 `EngineConfig`。不同配置生成的 `none` 不能互相复用，
+否则较窄的搜索可能错误地阻止较宽的搜索继续尝试。缓存命中仍须经过证书检查器。
+
+`engineCacheLookup` 把底层的嵌套 `Option` 展开成三个明确状态：`miss` 表示从未缓存过
+这个查询，`notFound` 表示该配置和深度已经搜索过但没有候选树，`found tree` 表示缓存了
+候选树。三种状态都不是数学证明；`found` 仍必须交给证书检查器，`notFound` 也不能解释成
+目标方必败。
+
+Lean 中的 `searchKey_eq_iff` 已经把这条约束写成定理：两个键相等，当且仅当剩余深度、目标方和
+完整局面同时相等。`SearchAudit` 还用不同深度、不同目标方和不同棋盘的恶意缓存条目做了回归，
+确认这些条目不会被错误复用。
+
 缓存命中后仍必须把返回树交给证书检查器。不要把“缓存中存在结果”直接当作 `CanForceWin` 证明。
+当前的 `searchCandidateTreeMemoized` 会返回候选树和更新后的缓存；`searchCandidateTree` 是从空缓存
+开始的兼容入口，`searchCandidateTreeCached` 则允许调用者提供已有缓存。
 
-如果以后实现“搜索结果 + 新缓存”的递归版本，需要补充：
+如果以后继续扩展当前“搜索结果 + 新缓存”的递归版本，需要补充：
 
-- 命中和未命中路径语义相同的定理；
-- 缓存键无碰撞的定理；
+- 命中和未命中路径在候选树结果上的更强语义等价定理；
 - 共享子树的编号和局面匹配测试；
-- 清空缓存与非空缓存结果一致的回归测试。
+- 清空缓存与非空缓存结果一致的回归测试；
+- 缓存命中率、内存占用和搜索时间的性能记录。
 
 ## 9. 阶段性验收任务
 
@@ -254,3 +362,7 @@ Lean 检查结果：checkLocalCertificateAt/checkCertificate
 ```
 
 搜索器的算法性能属于实验结果；只有通过 Lean 检查的证书才属于形式化证明成果。
+
+这项缓存是搜索器可以采用的正确性基础，但当前尚未接入 `Gomoku.Engine` 默认递归流程。
+接入时仍须维护合法落子、终局优先级和证书检查；缓存命中或性能提升都不能替代
+`checkCertificate`。

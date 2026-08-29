@@ -52,6 +52,92 @@ theorem step_reverse {c q : Coord} {d : Direction} {n : Int}
     simp [step, Direction.dx, Direction.dy, toFin15] at h ⊢ <;>
     omega
 
+/- Offsets along one direction compose whenever both intermediate steps stay
+   on the board.  This is the algebraic bridge used to re-root a run at an
+   endpoint. -/
+theorem step_compose {c q r : Coord} {d : Direction} {a b : Int}
+    (h₁ : step c d a = some q) (h₂ : step q d b = some r) :
+    step c d (a + b) = some r := by
+  rcases c with ⟨⟨cx, hcx⟩, ⟨cy, hcy⟩⟩
+  rcases q with ⟨⟨qx, hqx⟩, ⟨qy, hqy⟩⟩
+  rcases r with ⟨⟨rx, hrx⟩, ⟨ry, hry⟩⟩
+  cases d <;>
+    simp [step, Direction.dx, Direction.dy, toFin15] at h₁ h₂ ⊢ <;>
+    omega
+
+@[simp] theorem step_zero (c : Coord) (d : Direction) :
+    step c d 0 = some c := by
+  rcases c with ⟨⟨cx, hcx⟩, ⟨cy, hcy⟩⟩
+  cases d <;>
+    simp [step, Direction.dx, Direction.dy, toFin15] <;>
+    omega
+
+/- The two endpoint offsets of a straight open four cannot identify the same
+   in-board coordinate.  The specialized statement keeps the proof small and
+   is exactly the separation needed by the open-four threat lemma below. -/
+theorem step_neg_one_ne_four {c q : Coord} {d : Direction}
+    (h₁ : step c d (-1) = some q)
+    (h₂ : step c d 4 = some q) : False := by
+  rcases c with ⟨⟨cx, hcx⟩, ⟨cy, hcy⟩⟩
+  cases d with
+  | horizontal =>
+      simp [step, Direction.dx, Direction.dy] at h₁ h₂
+      rcases h₁ with ⟨h₁, e₁⟩
+      rcases h₂ with ⟨h₂, e₂⟩
+      have hx := congrArg (fun z : Coord => z.1.1) (e₁.trans e₂.symm)
+      simp [toFin15] at hx
+      omega
+  | vertical =>
+      simp [step, Direction.dx, Direction.dy] at h₁ h₂
+      rcases h₁ with ⟨h₁, e₁⟩
+      rcases h₂ with ⟨h₂, e₂⟩
+      have hy := congrArg (fun z : Coord => z.2.1) (e₁.trans e₂.symm)
+      simp [toFin15] at hy
+      omega
+  | diagonalUp =>
+      simp [step, Direction.dx, Direction.dy] at h₁ h₂
+      rcases h₁ with ⟨h₁, e₁⟩
+      rcases h₂ with ⟨h₂, e₂⟩
+      have hx := congrArg (fun z : Coord => z.1.1) (e₁.trans e₂.symm)
+      simp [toFin15] at hx
+      omega
+  | diagonalDown =>
+      simp [step, Direction.dx, Direction.dy] at h₁ h₂
+      rcases h₁ with ⟨h₁, e₁⟩
+      rcases h₂ with ⟨h₂, e₂⟩
+      have hx := congrArg (fun z : Coord => z.1.1) (e₁.trans e₂.symm)
+      simp [toFin15] at hx
+      omega
+
+/- Re-rooting a line at its left endpoint shifts every offset by one.  The
+   proof uses `step_compose` in both directions, so it remains valid when the
+   shifted cell is outside the board (both sides are then `none`). -/
+theorem step_left_endpoint_shift {c q : Coord} {d : Direction}
+    (h : step c d (-1) = some q) :
+    ∀ n : Fin 5, step q d (n.1 : Int) =
+      step c d ((n.1 : Int) - 1) := by
+  intro n
+  cases hright : step c d ((n.1 : Int) - 1) with
+  | none =>
+      have hleft : step q d (n.1 : Int) = none := by
+        cases hshift : step q d (n.1 : Int) with
+        | none => rfl
+        | some r =>
+            have hcomp := step_compose h hshift
+            have hsame : step c d ((n.1 : Int) - 1) = some r := by
+              simpa only [sub_eq_add_neg, add_comm] using hcomp
+            rw [hright] at hsame
+            cases hsame
+      rw [hleft]
+  | some r =>
+      have hback := step_reverse hright
+      have hcomp := step_compose hback h
+      have hshift : step q d (n.1 : Int) = some r := by
+        have hrev := step_reverse hcomp
+        convert hrev using 1
+        norm_num
+      rw [hshift]
+
 def lineCells (c : Coord) (d : Direction) (length : Nat) : List Coord :=
   (List.range length).filterMap (fun n => step c d n)
 

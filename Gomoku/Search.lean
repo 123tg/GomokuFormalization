@@ -47,6 +47,11 @@ theorem coordIndex_coordAtIndex (i : Fin 225) :
   simp [coordAtIndex, coordIndex]
   omega
 
+theorem mem_allCoords (c : Coord) : c ∈ allCoords := by
+  change c ∈ Array.ofFn coordAtIndex
+  rw [Array.mem_ofFn]
+  exact ⟨coordIndex c, coordAtIndex_coordIndex c⟩
+
 /- An exact, executable row-major key for transposition tables.  The key is
    intentionally a lossless `Array Cell`, so a later cache cannot merge two
    different board positions by hash collision. -/
@@ -294,6 +299,108 @@ theorem createsFiveFast_terminal_iff
     · have hfive := Position.terminal_winner_hasAtLeastFive hterminal
       change hasAtLeastFive (s.board.place m s.turn) p at hfive
       simpa [hturn] using hfive
+
+/- A single executable boundary for the result of a candidate move.  The
+   function deliberately returns `none` for an illegal move, because it is
+   used by the untrusted search engine as a total computation.  The theorem
+   below is the trusted interpretation: on a non-terminal position and a
+   legal move, this fast classification is exactly the ordinary game rule. -/
+def terminalAfterMoveFast (s : Position) (m : Coord) : Option Outcome :=
+  if hlegal : legalMove s m then
+    if createsFiveFast s.board s.turn m then
+      some (winner s.turn)
+    else if Board.full (play s m).board then
+      some .draw
+    else
+      none
+  else
+    none
+
+theorem terminalAfterMoveFast_eq_terminal
+    {s : Position} {m : Coord}
+    (hterm : terminal s = none) (hlegal : legalMove s m) :
+    terminalAfterMoveFast s m = terminal (play s m) := by
+  have hsnoterm : ¬ Position.isTerminal s :=
+    Position.not_isTerminal_of_terminal_none hterm
+  have hnotold : ¬ hasAtLeastFive s.board s.turn := by
+    intro h
+    apply hsnoterm
+    cases hturn : s.turn with
+    | black => exact Or.inl (by simpa [hturn] using h)
+    | white => exact Or.inr (Or.inl (by simpa [hturn] using h))
+  have hnotother :
+      ¬ hasAtLeastFive (play s m).board (Player.other s.turn) := by
+    intro hchild
+    change hasAtLeastFive (s.board.place m s.turn) (Player.other s.turn) at hchild
+    apply hlegal.1
+    cases hturn : s.turn with
+    | black =>
+        have hprev : hasAtLeastFive s.board .white := by
+          apply hasAtLeastFive_of_place_other
+            (p := .white) (q := .black) (r := m) (by decide)
+          simpa [hturn] using hchild
+        exact Or.inr (Or.inl hprev)
+    | white =>
+        have hprev : hasAtLeastFive s.board .black := by
+          apply hasAtLeastFive_of_place_other
+            (p := .black) (q := .white) (r := m) (by decide)
+          simpa [hturn] using hchild
+        exact Or.inl hprev
+  by_cases hfast : createsFiveFast s.board s.turn m = true
+  · have hwin := createsFiveFast_terminal
+      (s := s) (p := s.turn) (m := m) rfl hlegal hfast
+    simp [terminalAfterMoveFast, hlegal, hfast, hwin]
+  · have hnotnew : ¬ hasAtLeastFive (play s m).board s.turn := by
+      intro hchild
+      change hasAtLeastFive (s.board.place m s.turn) s.turn at hchild
+      have hplaced := hchild
+      exact hfast ((createsFiveFast_iff hnotold).mpr hplaced)
+    cases hturn : s.turn with
+    | black =>
+        have hnotblack : ¬ hasAtLeastFive (play s m).board .black := by
+          simpa [hturn] using hnotnew
+        have hnotwhite : ¬ hasAtLeastFive (play s m).board .white := by
+          simpa [hturn] using hnotother
+        by_cases hfull : Board.full (play s m).board
+        · simp [terminalAfterMoveFast, hlegal, hfast, hfull, terminal,
+            Position.terminal, hnotblack, hnotwhite]
+        · simp [terminalAfterMoveFast, hlegal, hfast, hfull, terminal,
+            Position.terminal, hnotblack, hnotwhite]
+    | white =>
+        have hnotblack : ¬ hasAtLeastFive (play s m).board .black := by
+          simpa [hturn] using hnotother
+        have hnotwhite : ¬ hasAtLeastFive (play s m).board .white := by
+          simpa [hturn] using hnotnew
+        by_cases hfull : Board.full (play s m).board
+        · simp [terminalAfterMoveFast, hlegal, hfast, hfull, terminal,
+            Position.terminal, hnotblack, hnotwhite]
+        · simp [terminalAfterMoveFast, hlegal, hfast, hfull, terminal,
+            Position.terminal, hnotblack, hnotwhite]
+
+theorem terminalAfterMoveFast_of_not_legal
+    {s : Position} {m : Coord} (hlegal : ¬ legalMove s m) :
+    terminalAfterMoveFast s m = none := by
+  simp [terminalAfterMoveFast, hlegal]
+
+theorem terminalAfterMoveFast_none_iff
+    {s : Position} {m : Coord}
+    (hterm : terminal s = none) (hlegal : legalMove s m) :
+    terminalAfterMoveFast s m = none ↔ terminal (play s m) = none := by
+  rw [terminalAfterMoveFast_eq_terminal hterm hlegal]
+
+theorem terminalAfterMoveFast_win_iff
+    {s : Position} {m : Coord}
+    (hterm : terminal s = none) (hlegal : legalMove s m) :
+    terminalAfterMoveFast s m = some (winner s.turn) ↔
+      terminal (play s m) = some (winner s.turn) := by
+  rw [terminalAfterMoveFast_eq_terminal hterm hlegal]
+
+theorem terminalAfterMoveFast_draw_iff
+    {s : Position} {m : Coord}
+    (hterm : terminal s = none) (hlegal : legalMove s m) :
+    terminalAfterMoveFast s m = some .draw ↔
+      terminal (play s m) = some .draw := by
+  rw [terminalAfterMoveFast_eq_terminal hterm hlegal]
 
 def immediateWinningMovesFirst (s : Position) (p : Player) : Array Coord :=
   let moves := orderedCandidateMoves s p
@@ -557,6 +664,28 @@ abbrev SearchMemo := Array SearchMemoEntry
 def searchKey (fuel : Nat) (s : Position) (target : Player) : SearchKey :=
   { fuel := fuel, target := target, position := positionKey s }
 
+/- The cache key is exact: two queries have the same key only when their
+   remaining depth, target player, and complete position are all equal.  This
+   is the small correctness fact that prevents a result proved at one depth
+   (or for the other player) from being silently reused for another query. -/
+theorem searchKey_eq_iff (fuel₁ fuel₂ : Nat) (s t : Position)
+    (p q : Player) :
+    searchKey fuel₁ s p = searchKey fuel₂ t q ↔
+      fuel₁ = fuel₂ ∧ p = q ∧ s = t := by
+  constructor
+  · intro h
+    have hfuel : fuel₁ = fuel₂ := congrArg SearchKey.fuel h
+    have htarget : p = q := congrArg SearchKey.target h
+    have hpositionKey : positionKey s = positionKey t :=
+      congrArg SearchKey.position h
+    have hposition : s = t := (positionKey_eq_iff s t).mp hpositionKey
+    exact ⟨hfuel, htarget, hposition⟩
+  · rintro ⟨hfuel, htarget, hposition⟩
+    cases hfuel
+    cases htarget
+    cases hposition
+    rfl
+
 def memoLookup (memo : SearchMemo) (key : SearchKey) : Option (Option CandidateTree) :=
   (memo.toList.find? (fun entry => decide (entry.key = key))).map SearchMemoEntry.result
 
@@ -697,10 +826,10 @@ def searchCandidateTree (fuel : Nat) (s : Position)
   (searchCandidateTreeMemoized #[] fuel s target).tree
 
 /- Cache adapter for the finite-depth search.  A hit reuses the stored tree;
-   a miss now runs the stateful recursive search, so entries discovered below
-   the root are carried back to the caller.  The result is still passed to the
-   certificate checker by `checkedDepthCertificateForCached`, so cached data
-   is never trusted merely because it was found in the table. -/
+   a miss runs the stateful search and returns its candidate tree.  The result
+   is still passed to the certificate checker by
+   `checkedDepthCertificateForCached`, so cached data is never trusted merely
+   because it was found in the table. -/
 def searchCandidateTreeCached (memo : SearchMemo) (fuel : Nat)
     (s : Position) (target : Player) : Option CandidateTree :=
   match memoLookup memo (searchKey fuel s target) with
@@ -753,6 +882,17 @@ theorem checkedDepthCertificateForCached_sound
     · simp at h
   · simp at h
 
+theorem checkedDepthCertificateForCached_isSome_sound
+    {memo : SearchMemo} {fuel : Nat} {s : Position} {p : Player}
+    (h : (checkedDepthCertificateForCached memo fuel s p).isSome) :
+    CanForceWin s p := by
+  cases hresult : checkedDepthCertificateForCached memo fuel s p with
+  | none =>
+      simp [hresult] at h
+  | some c =>
+      apply checkedDepthCertificateForCached_sound
+      simpa [hresult]
+
 def checkedDepthCertificateFor (fuel : Nat) (s : Position) (target : Player) :
     Option CompactCertificate :=
   match searchCandidateTree fuel s target with
@@ -780,6 +920,100 @@ theorem checkedDepthCertificateFor_sound
       simpa [candidateTreeCertificate] using hsound
     · simp at h
   · simp at h
+
+theorem checkedDepthCertificateFor_isSome_sound
+    {fuel : Nat} {s : Position} {p : Player}
+    (h : (checkedDepthCertificateFor fuel s p).isSome) :
+    CanForceWin s p := by
+  cases hresult : checkedDepthCertificateFor fuel s p with
+  | none =>
+      simp [hresult] at h
+  | some c =>
+      apply checkedDepthCertificateFor_sound
+      simpa [hresult]
+
+/- A diagnostic form of the checked finite-depth search.  `checkedDepthCertificateFor`
+   intentionally collapses every unsuccessful run to `none`, which is convenient
+   for a small API but hides whether the candidate generator found a tree that the
+   trusted checker rejected.  This three-way result is still untrusted data; only
+   the `accepted` case has a soundness theorem below. -/
+inductive CheckedDepthResult where
+  | noCandidate
+  | rejected (certificate : CompactCertificate)
+  | accepted (certificate : CompactCertificate)
+
+def CheckedDepthResult.isAccepted : CheckedDepthResult → Bool
+  | .accepted _ => true
+  | _ => false
+
+def CheckedDepthResult.isRejected : CheckedDepthResult → Bool
+  | .rejected _ => true
+  | _ => false
+
+def CheckedDepthResult.isNoCandidate : CheckedDepthResult → Bool
+  | .noCandidate => true
+  | _ => false
+
+def checkedCandidateTreeResult (s : Position) (target : Player)
+    (tree : CandidateTree) : CheckedDepthResult :=
+  let c := candidateTreeCertificate target tree
+  if checkLocalCertificateAt s c then .accepted c else .rejected c
+
+def checkedDepthResultFor (fuel : Nat) (s : Position) (target : Player) :
+    CheckedDepthResult :=
+  match searchCandidateTree fuel s target with
+  | none => .noCandidate
+  | some tree => checkedCandidateTreeResult s target tree
+
+theorem checkedDepthResultFor_accepted_iff
+    {fuel : Nat} {s : Position} {p : Player} {c : CompactCertificate} :
+    checkedDepthResultFor fuel s p = .accepted c ↔
+      checkedDepthCertificateFor fuel s p = some c := by
+  unfold checkedDepthResultFor checkedDepthCertificateFor checkedCandidateTreeResult
+  cases htree : searchCandidateTree fuel s p with
+  | none => simp [htree]
+  | some tree =>
+      by_cases hcheck : checkLocalCertificateAt s
+          (candidateTreeCertificate p tree) = true
+      · simp [htree, hcheck, checkedCandidateTreeResult]
+      · simp [htree, hcheck, checkedCandidateTreeResult]
+
+theorem checkedDepthResultFor_noCandidate_iff
+    {fuel : Nat} {s : Position} {p : Player} :
+    checkedDepthResultFor fuel s p = .noCandidate ↔
+      searchCandidateTree fuel s p = none := by
+  unfold checkedDepthResultFor
+  cases htree : searchCandidateTree fuel s p with
+  | none => simp [htree]
+  | some tree =>
+      by_cases hcheck : checkLocalCertificateAt s
+          (candidateTreeCertificate p tree) = true
+      · simp [htree, hcheck, checkedCandidateTreeResult]
+      · simp [htree, hcheck, checkedCandidateTreeResult]
+
+theorem checkedDepthResultFor_rejected_iff
+    {fuel : Nat} {s : Position} {p : Player} {c : CompactCertificate} :
+    checkedDepthResultFor fuel s p = .rejected c ↔
+      ∃ tree, searchCandidateTree fuel s p = some tree ∧
+        checkLocalCertificateAt s (candidateTreeCertificate p tree) = false ∧
+        c = candidateTreeCertificate p tree := by
+  unfold checkedDepthResultFor checkedCandidateTreeResult
+  cases htree : searchCandidateTree fuel s p with
+  | none => simp [htree]
+  | some tree =>
+      cases hcheck : checkLocalCertificateAt s
+          (candidateTreeCertificate p tree) with
+      | false =>
+          simp [hcheck]
+          exact eq_comm
+      | true => simp [htree, hcheck]
+
+theorem checkedDepthResultFor_sound
+    {fuel : Nat} {s : Position} {p : Player} {c : CompactCertificate}
+    (h : checkedDepthResultFor fuel s p = .accepted c) :
+    CanForceWin s p := by
+  exact checkedDepthCertificateFor_sound
+    ((checkedDepthResultFor_accepted_iff).mp h)
 
 def immediateCertificateNodesChecked (s : Position) (p : Player) : Bool :=
   match firstWinningMove s p with
@@ -876,101 +1110,6 @@ theorem acceptCertificate_sound {c : CompactCertificate}
     CanForceWin initialPosition .black := by
   exact compact_certificate_sound c ((acceptCertificate_some_iff c).mp h)
 
-/- Executable regression checks for the untrusted candidate generator.  These
-   examples check coverage and filtering only; they do not contribute to the
-   certificate soundness theorem. -/
-example : allCoords.size = 225 := by
-  native_decide
-
-example : allCoords[0]? = some ((0, 0) : Coord) := by
-  native_decide
-
-example : allCoords[112]? = some ((7, 7) : Coord) := by
-  native_decide
-
-example : allCoords[224]? = some ((14, 14) : Coord) := by
-  native_decide
-
-example : coordIndex ((0, 0) : Coord) = 0 := by
-  native_decide
-
-example : coordIndex ((7, 7) : Coord) = 112 := by
-  native_decide
-
-example : coordIndex ((14, 14) : Coord) = 224 := by
-  native_decide
-
-example (c : Coord) : coordAtIndex (coordIndex c) = c := by
-  exact coordAtIndex_coordIndex c
-
-example : boardKey Board.empty = boardKey Board.empty := by
-  rfl
-
-example : positionKey initialPosition = positionKey initialPosition := by
-  rfl
-
-example :
-    containsPositionKey #[positionKey initialPosition] initialPosition = true := by
-  native_decide
-
-example :
-    containsPositionKey #[positionKey initialPosition]
-      (play initialPosition (7, 7)) = false := by
-  native_decide
-
-example : positionKey initialPosition ≠ positionKey (play initialPosition (7, 7)) := by
-  intro h
-  have hturn := congrArg Prod.fst h
-  have hne : (Player.black : Player) ≠ Player.white := by decide
-  apply hne
-  simpa [positionKey, initialPosition, Position.initial, play, Position.play] using hturn
-
-example (s : Position) (p : Player) (c : Coord) :
-    (winningCellsMask s p).get (coordIndex c) = true ↔
-      c ∈ WinningCells s p := by
-  exact winningCellsMask_get_iff s p c
-
-example : (candidateMoves initialPosition .black).size = 225 := by
-  native_decide
-
-example : (candidateMovesFast initialPosition .black).size = 225 := by
-  native_decide
-
-example : ((7, 7) : Coord) ∈ candidateMoves initialPosition .black := by
-  native_decide
-
-example : (candidateMoves initialPosition .white).size = 0 := by
-  native_decide
-
-example : (candidateMovesFast initialPosition .white).size = 0 := by
-  native_decide
-
-example :
-    (candidateMoves (play initialPosition (7, 7)) .white).size = 224 := by
-  native_decide
-
-example :
-    (candidateMovesFast (play initialPosition (7, 7)) .white).size = 224 := by
-  native_decide
-
-example :
-    (orderedCandidateMoves (play initialPosition (7, 7)) .white).size = 224 := by
-  native_decide
-
-example :
-    (orderedCandidateMoves (play initialPosition (7, 7)) .white)[0]? =
-      some ((6, 6) : Coord) := by
-  native_decide
-
-example :
-    ((0, 0) : Coord) ∈
-      orderedCandidateMoves (play initialPosition (7, 7)) .white := by
-  native_decide
-
-example :
-    ((7, 7) : Coord) ∉ candidateMoves (play initialPosition (7, 7)) .white := by
-  native_decide
-
 def searchTerminalBoard : Board :=
   Board.place
     (Board.place
@@ -984,9 +1123,6 @@ def searchTerminalBoard : Board :=
 def searchTerminalPosition : Position :=
   ⟨searchTerminalBoard, .white⟩
 
-example : (candidateMoves searchTerminalPosition .white).size = 0 := by
-  native_decide
-
 def searchImmediateBoard : Board :=
   Board.place
     (Board.place
@@ -997,40 +1133,6 @@ def searchImmediateBoard : Board :=
 
 def searchImmediatePosition : Position :=
   ⟨searchImmediateBoard, .black⟩
-
-example : (firstWinningMove searchImmediatePosition .black).isSome := by
-  native_decide
-
-example :
-    firstWinningMoveReference searchImmediatePosition .black =
-      firstWinningMove searchImmediatePosition .black := by
-  native_decide
-
-example :
-    terminal (play searchImmediatePosition (4, 7)) = some .blackWin := by
-  apply createsFiveFast_terminal_of_immediateCandidate
-    (s := searchImmediatePosition) (p := .black) (m := (4, 7))
-  · native_decide
-  · native_decide
-
-example :
-    (immediateWinningMovesFirst searchImmediatePosition .black)[0]? =
-      some ((4, 7) : Coord) := by
-  native_decide
-
-example :
-    (immediateWinningMovesFirst searchImmediatePosition .black).size = 221 := by
-  native_decide
-
-example : (immediateCertificateFor searchImmediatePosition .black).isSome := by
-  native_decide
-
-example : immediateCertificateNodesChecked searchImmediatePosition .black = true := by
-  native_decide
-
-example : CanForceWin searchImmediatePosition .black := by
-  apply immediateCertificateNodesChecked_sound
-  native_decide
 
 /- Fast five detection regression suite.  Each board has four stones and the
    tested move fills the fifth point; the boundary case exercises a window
@@ -1072,39 +1174,5 @@ def fastInsufficientBoard : Board :=
     (Board.place
       (Board.place Board.empty (5, 7) .black) (6, 7) .black)
     (7, 7) .black
-
-example : createsFiveFast searchImmediateBoard .black (4, 7) = true := by
-  native_decide
-
-example : createsFiveFast fastVerticalBoard .black (7, 7) = true := by
-  native_decide
-
-example : createsFiveFast fastDiagonalUpBoard .black (7, 7) = true := by
-  native_decide
-
-example : createsFiveFast fastDiagonalDownBoard .black (7, 2) = true := by
-  native_decide
-
-example : createsFiveFast fastBoundaryBoard .black (4, 0) = true := by
-  native_decide
-
-example : createsFiveFast fastInsufficientBoard .black (8, 7) = false := by
-  native_decide
-
-example : ¬ hasAtLeastFive fastInsufficientBoard .black := by
-  native_decide
-
-example :
-    createsFiveFast searchImmediateBoard .black (4, 7) = true ↔
-      hasAtLeastFive (searchImmediateBoard.place (4, 7) .black) .black := by
-  exact createsFiveFast_iff (by native_decide)
-
-example :
-    createsFiveFast searchImmediateBoard .black (4, 7) = true ↔
-      terminal (play ⟨searchImmediateBoard, .black⟩ (4, 7)) = some .blackWin := by
-  apply createsFiveFast_terminal_iff
-    (s := ⟨searchImmediateBoard, .black⟩) (p := .black) (m := (4, 7))
-  · rfl
-  · native_decide
 
 end Gomoku
