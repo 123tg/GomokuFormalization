@@ -161,6 +161,10 @@ struct ParsedProblem {
 };
 
 ParsedProblem parseProblem(std::istream& input);
+bool usesGlobalCertificateChecker(const Position& root,
+                                  const Certificate& certificate);
+void validateCertificate(const Position& root,
+                         const Certificate& certificate);
 void writeLeanCertificate(std::ostream& output, const Position& root,
                           const Certificate& certificate,
                           const std::string& definitionPrefix);

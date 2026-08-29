@@ -125,6 +125,16 @@ int main(int argc, char** argv) {
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - started);
 
+    std::cout << "search_target=" << gomoku::playerName(problem.target) << "\n";
+    std::cout << "max_depth=" << config.maxDepth << "\n";
+    std::cout << "max_vcf_depth=" << config.maxVcfDepth << "\n";
+    std::cout << "max_nodes=" << config.maxNodes << "\n";
+    std::cout << "max_vcf_nodes=" << config.maxVcfNodes << "\n";
+    std::cout << "max_table_entries=" << config.maxTableEntries << "\n";
+    std::cout << "max_certificate_nodes=" << config.maxCertificateNodes << "\n";
+    std::cout << "max_prover_moves=" << config.maxProverMoves << "\n";
+    std::cout << "forced_move_pruning="
+              << (config.forcedMovePruning ? "true" : "false") << "\n";
     std::cout << "status=" << gomoku::solveStatusName(result.status) << "\n";
     if (result.depth.has_value()) {
       std::cout << "depth=" << *result.depth << "\n";
@@ -143,6 +153,8 @@ int main(int argc, char** argv) {
 
     if (result.status != gomoku::SolveStatus::found ||
         !result.certificate.has_value()) {
+      std::cout << "certificate=none\n";
+      std::cout << "lean_checker=not-run\n";
       return result.status == gomoku::SolveStatus::depthLimit ? 2 : 3;
     }
 
@@ -152,7 +164,23 @@ int main(int argc, char** argv) {
     }
     gomoku::writeLeanCertificate(output, problem.root, *result.certificate,
                                   definition);
+    const std::streamoff certificateBytes =
+        static_cast<std::streamoff>(output.tellp());
+    output.flush();
+    if (!output) {
+      throw std::runtime_error("failed to write certificate output: " + outputPath);
+    }
+    std::cout << "certificate=some\n";
     std::cout << "certificate_nodes=" << result.certificate->nodes.size()
+              << "\n";
+    std::cout << "certificate_bytes=" << certificateBytes << "\n";
+    std::cout << "certificate_sharing=false\n";
+    std::cout << "cache_key=depth,target,turn,black_bits,white_bits\n";
+    std::cout << "lean_checker="
+              << (gomoku::usesGlobalCertificateChecker(
+                      problem.root, *result.certificate)
+                      ? "checkCertificate"
+                      : "checkLocalCertificateAt")
               << "\n";
     std::cout << "output=" << outputPath << "\n";
     return 0;

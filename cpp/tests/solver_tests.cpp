@@ -63,6 +63,7 @@ void testImmediateCertificate() {
           "found result should contain a certificate");
   require(result.certificate->nodes.size() == 2,
           "immediate proof should have two nodes");
+  gomoku::validateCertificate(root, *result.certificate);
 
   std::ostringstream lean;
   gomoku::writeLeanCertificate(lean, root, *result.certificate,
@@ -71,6 +72,18 @@ void testImmediateCertificate() {
           "export should call the current Lean checker");
   require(lean.str().find("CompactCertificate") != std::string::npos,
           "export should retain CompactCertificate format");
+  require(lean.str().find("CompactCertificate-v1") != std::string::npos,
+          "export should identify the Lean interface version");
+
+  gomoku::Certificate invalid = *result.certificate;
+  invalid.nodes.front().child = 0;
+  bool rejected = false;
+  try {
+    gomoku::validateCertificate(root, invalid);
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  require(rejected, "preflight must reject a non-forward child reference");
 }
 
 void testOpponentForkCertificate() {
@@ -96,6 +109,31 @@ void testOpponentForkCertificate() {
           "opponent root should emit opponentMoves");
   require(rootNode.children.size() == 2,
           "opponent root must cover both legal replies");
+  gomoku::validateCertificate(root, *result.certificate);
+
+  gomoku::Certificate incomplete = *result.certificate;
+  incomplete.nodes.front().children.pop_back();
+  bool rejected = false;
+  try {
+    gomoku::validateCertificate(root, incomplete);
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  require(rejected, "preflight must reject an omitted opponent reply");
+}
+
+void testCheckerSelection() {
+  const gomoku::Position initialPosition{};
+  gomoku::Certificate certificate;
+  certificate.target = gomoku::Player::black;
+  require(gomoku::usesGlobalCertificateChecker(initialPosition, certificate),
+          "empty board with Black target must select checkCertificate");
+
+  gomoku::Position localPosition = initialPosition;
+  localPosition.board.place({7, 7}, gomoku::Player::black);
+  localPosition.turn = gomoku::Player::white;
+  require(!gomoku::usesGlobalCertificateChecker(localPosition, certificate),
+          "non-initial root must select checkLocalCertificateAt");
 }
 
 void testVcfHintCertificate() {
@@ -200,6 +238,7 @@ int main() {
     testParser();
     testImmediateCertificate();
     testOpponentForkCertificate();
+    testCheckerSelection();
     testVcfHintCertificate();
     testResourceLimits();
     std::cout << "all C++ solver tests passed\n";

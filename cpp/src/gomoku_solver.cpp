@@ -923,16 +923,118 @@ ParsedProblem parseProblem(std::istream& input) {
   return {{board, turn}, target};
 }
 
-void writeLeanCertificate(std::ostream& output, const Position& root,
-                          const Certificate& certificate,
-                          const std::string& definitionPrefix) {
+bool usesGlobalCertificateChecker(const Position& root,
+                                  const Certificate& certificate) {
+  const Position initialPosition{};
+  return certificate.target == Player::black && root == initialPosition;
+}
+
+void validateCertificate(const Position& root,
+                         const Certificate& certificate) {
   if (certificate.nodes.empty()) {
     throw std::runtime_error("cannot export an empty certificate");
   }
+  if (!(certificate.nodes.front().position == root)) {
+    throw std::runtime_error("certificate root position does not match input root");
+  }
+
+  const auto fail = [](std::size_t index, const std::string& message) {
+    throw std::runtime_error("invalid certificate node " +
+        std::to_string(index) + ": " + message);
+  };
+  const auto checkChild = [&](std::size_t index, const Position& position,
+                              Coord move, std::size_t child) {
+    if (!position.board.inside(move) || !position.board.isEmpty(move)) {
+      fail(index, "edge move is not an empty in-range coordinate");
+    }
+    if (child <= index || child >= certificate.nodes.size()) {
+      fail(index, "child reference must be in range and greater than parent");
+    }
+    if (!(certificate.nodes[child].position == play(position, move))) {
+      fail(index, "child position does not equal play(parent, move)");
+    }
+  };
+
+  for (std::size_t index = 0; index < certificate.nodes.size(); ++index) {
+    const CertificateNode& node = certificate.nodes[index];
+    if (index == 0) {
+      if (node.sourceParent != noParent) {
+        fail(index, "root must not have an exporter source parent");
+      }
+    } else {
+      if (node.sourceParent == noParent || node.sourceParent >= index) {
+        fail(index, "exporter source parent must precede the node");
+      }
+      const Position& source = certificate.nodes[node.sourceParent].position;
+      if (source.board.terminal().has_value() ||
+          !source.board.inside(node.sourceMove) ||
+          !source.board.isEmpty(node.sourceMove) ||
+          !(node.position == play(source, node.sourceMove))) {
+        fail(index, "exporter source edge does not reconstruct the node position");
+      }
+    }
+
+    const std::optional<Outcome> terminal = node.position.board.terminal();
+    switch (node.kind) {
+      case CertificateKind::terminal:
+        if (!terminal.has_value() || *terminal != node.outcome ||
+            node.outcome != playerOutcome(certificate.target)) {
+          fail(index, "terminal label must be the target player's actual win");
+        }
+        break;
+      case CertificateKind::proverMove:
+        if (terminal.has_value()) {
+          fail(index, "proverMove position is already terminal");
+        }
+        if (node.position.turn != certificate.target) {
+          fail(index, "proverMove turn does not equal certificate target");
+        }
+        checkChild(index, node.position, node.move, node.child);
+        break;
+      case CertificateKind::opponentMoves: {
+        if (terminal.has_value()) {
+          fail(index, "opponentMoves position is already terminal");
+        }
+        if (node.position.turn != other(certificate.target)) {
+          fail(index, "opponentMoves turn is not the opponent's turn");
+        }
+        const std::vector<Coord> legalMoves = node.position.board.emptyMoves();
+        if (node.children.size() != legalMoves.size()) {
+          fail(index, "opponentMoves must contain every legal move exactly once");
+        }
+        std::array<bool, boardCells> covered{};
+        for (const auto& childEdge : node.children) {
+          const Coord move = childEdge.first;
+          if (!node.position.board.inside(move)) {
+            fail(index, "opponent edge coordinate is outside the board");
+          }
+          const std::size_t moveIndex = static_cast<std::size_t>(indexOf(move));
+          if (covered[moveIndex]) {
+            fail(index, "opponentMoves contains a duplicate move");
+          }
+          covered[moveIndex] = true;
+          checkChild(index, node.position, move, childEdge.second);
+        }
+        for (const Coord move : legalMoves) {
+          if (!covered[static_cast<std::size_t>(indexOf(move))]) {
+            fail(index, "opponentMoves omits a legal move");
+          }
+        }
+        break;
+      }
+    }
+  }
+}
+
+void writeLeanCertificate(std::ostream& output, const Position& root,
+                          const Certificate& certificate,
+                          const std::string& definitionPrefix) {
+  validateCertificate(root, certificate);
   const std::string prefix = sanitizeIdentifier(definitionPrefix);
   output << "import Gomoku.Certificate\n\n";
   output << "namespace Gomoku.Generated\n\n";
   output << "/- Generated by cpp/gomoku_solver.  The generator is untrusted;\n";
+  output << "   interface: CompactCertificate-v1, root index 0, parent < child;\n";
   output << "   the theorem below depends on the existing Lean checker. -/\n";
   output << "def " << prefix
          << "RootStones : Array (Coord × Player) := #[\n";
@@ -1008,14 +1110,25 @@ void writeLeanCertificate(std::ostream& output, const Position& root,
   output << "    ] }\n\n";
   output << "set_option linter.style.nativeDecide false in\n";
   output << "theorem " << prefix << "Certificate_checked :\n";
-  output << "    checkLocalCertificateAt " << prefix << "RootPosition "
-         << prefix << "Certificate = true := by\n";
+  if (usesGlobalCertificateChecker(root, certificate)) {
+    output << "    checkCertificate " << prefix
+           << "Certificate = true := by\n";
+  } else {
+    output << "    checkLocalCertificateAt " << prefix << "RootPosition "
+           << prefix << "Certificate = true := by\n";
+  }
   output << "  native_decide\n\n";
   output << "theorem " << prefix << "Certificate_sound :\n";
-  output << "    CanForceWin " << prefix << "RootPosition " << prefix
-         << "Certificate.target :=\n";
-  output << "  local_certificate_at_sound " << prefix << "RootPosition "
-         << prefix << "Certificate " << prefix << "Certificate_checked\n\n";
+  if (usesGlobalCertificateChecker(root, certificate)) {
+    output << "    CanForceWin initialPosition .black :=\n";
+    output << "  compact_certificate_sound " << prefix << "Certificate "
+           << prefix << "Certificate_checked\n\n";
+  } else {
+    output << "    CanForceWin " << prefix << "RootPosition " << prefix
+           << "Certificate.target :=\n";
+    output << "  local_certificate_at_sound " << prefix << "RootPosition "
+           << prefix << "Certificate " << prefix << "Certificate_checked\n\n";
+  }
   output << "end Gomoku.Generated\n";
 }
 
