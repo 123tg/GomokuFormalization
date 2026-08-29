@@ -120,6 +120,13 @@ example : Board.full auditDrawBoard := auditDraw_full
 example : ¬ hasAtLeastFive auditDrawBoard .black := auditDraw_no_black_five
 example : ¬ hasAtLeastFive auditDrawBoard .white := auditDraw_no_white_five
 example : terminal auditDrawPosition = some .draw := auditDraw_terminal
+
+example : (∀ c, ¬ legalMove auditDrawPosition c) := by
+  exact (Position.no_legalMove_iff_isTerminal).2
+    (Position.terminal_outcome_isTerminal auditDraw_terminal)
+
+example : ¬ CanForceWin auditDrawPosition .black := by
+  exact not_canForceWin_of_draw auditDraw_terminal .black
 example (c : Coord) : ¬ legalMove auditDrawPosition c := by
   exact Position.terminal_outcome_no_legal auditDraw_terminal c
 
@@ -142,6 +149,60 @@ example : ¬ CanForceWin auditDrawPosition .black := by
 example : ¬ CanForceWin auditDrawPosition .white := by
   apply not_canForceWin_of_terminal_ne (out := .draw) auditDraw_terminal
   decide
+
+/- A normal, reachable one-move win.  Unlike the isolated board fixtures
+   above, Black and White have played four stones each from the empty board,
+   and it is Black's turn with a legal winning endpoint available.  This is
+   the smallest useful reference position for an external searcher bridge. -/
+def auditReachableImmediateMoves : List Coord :=
+  [(3, 8), (0, 0), (4, 8), (0, 1), (5, 8), (0, 2), (6, 8), (0, 3)]
+
+def auditReachableImmediatePosition : Position :=
+  Position.playMoves Position.initial auditReachableImmediateMoves
+
+def auditReachableImmediateWinningMove : Coord := (7, 8)
+
+theorem auditReachableImmediate_moves_legal :
+    Position.LegalMoveSequence Position.initial auditReachableImmediateMoves := by
+  native_decide
+
+theorem auditReachableImmediate_reachable :
+    Reachable auditReachableImmediatePosition := by
+  exact Position.reachable_playMoves Position.Reachable.initial
+    auditReachableImmediateMoves auditReachableImmediate_moves_legal
+
+theorem auditReachableImmediate_nonterminal :
+    terminal auditReachableImmediatePosition = none := by
+  native_decide
+
+theorem auditReachableImmediate_legal :
+    legalMove auditReachableImmediatePosition
+      auditReachableImmediateWinningMove := by
+  exact ⟨Position.not_isTerminal_of_terminal_none
+      auditReachableImmediate_nonterminal, by native_decide⟩
+
+theorem auditReachableImmediate_terminal :
+    terminal (play auditReachableImmediatePosition
+      auditReachableImmediateWinningMove) = some .blackWin := by
+  native_decide
+
+def auditReachableImmediateCertificate : CompactCertificate :=
+  { target := .black
+    root := 0
+    nodes := #[
+      .proverMove auditReachableImmediatePosition
+        auditReachableImmediateWinningMove 1,
+      .terminal (play auditReachableImmediatePosition
+        auditReachableImmediateWinningMove) .blackWin
+    ] }
+
+example : checkLocalCertificateAt auditReachableImmediatePosition
+    auditReachableImmediateCertificate = true := by
+  native_decide
+
+example : CanForceWin auditReachableImmediatePosition .black := by
+  exact local_certificate_at_sound auditReachableImmediatePosition
+    auditReachableImmediateCertificate (by native_decide)
 
 def auditWhiteFive : Board :=
   boardWithStones .white [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]
@@ -217,6 +278,12 @@ theorem auditReachableWin_terminal :
 
 example : Position.countBlack auditReachableWinPosition = 5 := by native_decide
 example : Position.countWhite auditReachableWinPosition = 4 := by native_decide
+
+example :
+    Position.countBlack auditReachableWinPosition =
+      Position.countWhite auditReachableWinPosition + 1 := by
+  exact (Position.reachable_turn_white_iff_count
+    auditReachableWin_reachable).mp rfl
 example : auditReachableWinPosition.turn = .white := by rfl
 example (c : Coord) : ¬ legalMove auditReachableWinPosition c := by
   exact Position.terminal_outcome_no_legal auditReachableWin_terminal c
@@ -254,6 +321,22 @@ theorem auditReachableOpponentThreat_wins :
     terminal (play auditReachableOpponentThreatPosition
       auditReachableOpponentWinningMove) = some .whiteWin := by
   native_decide
+
+def auditReachableOpponentWinPosition : Position :=
+  play auditReachableOpponentThreatPosition auditReachableOpponentWinningMove
+
+theorem auditReachableOpponentWin_reachable :
+    Reachable auditReachableOpponentWinPosition := by
+  exact Position.Reachable.step auditReachableOpponentThreat_reachable
+    auditReachableOpponentThreat_legal
+
+example : auditReachableWinPosition.turn = Player.other .black := by
+  exact Position.reachable_winner_turn auditReachableWin_reachable
+    auditReachableWin_terminal
+
+example : auditReachableOpponentWinPosition.turn = Player.other .white := by
+  exact Position.reachable_winner_turn auditReachableOpponentWin_reachable
+    auditReachableOpponentThreat_wins
 
 example : Position.countBlack auditReachableOpponentThreatPosition = 5 := by
   native_decide

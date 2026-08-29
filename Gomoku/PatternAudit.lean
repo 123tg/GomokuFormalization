@@ -48,6 +48,9 @@ example : straightOpenThree patternDiagonalDownThree .black (6, 8) .diagonalDown
 def patternHorizontalFour : Board :=
   patternBoard .black [(6, 7), (7, 7), (8, 7), (9, 7)]
 
+def patternWhiteHorizontalFour : Board :=
+  patternBoard .white [(6, 7), (7, 7), (8, 7), (9, 7)]
+
 def patternVerticalFour : Board :=
   patternBoard .black [(7, 6), (7, 7), (7, 8), (7, 9)]
 
@@ -59,6 +62,14 @@ def patternDiagonalDownFour : Board :=
 
 example : straightOpenFour patternHorizontalFour .black (6, 7) .horizontal := by
   native_decide
+
+example : SingleOpenFour ⟨patternWhiteHorizontalFour, .white⟩ .white := by
+  native_decide
+
+example : CanForceWin ⟨patternWhiteHorizontalFour, .white⟩ .white := by
+  exact singleOpenFour_forces_win_any_player (by rfl)
+    (Position.not_isTerminal_of_terminal_none (by native_decide)) (by
+    native_decide)
 
 example : straightOpenFour patternVerticalFour .black (7, 6) .vertical := by
   native_decide
@@ -121,6 +132,29 @@ example : (WinningCells ⟨patternHalfOpenFour, .black⟩ .black).card = 1 := by
 
 example : (WinningCells ⟨patternHorizontalFour, .black⟩ .black).card = 2 := by
   native_decide
+
+/- The general theorem identifies the two endpoint cells independently of the
+   executable card computation above. -/
+example : ∃ left right,
+    left ∈ WinningCells ⟨patternHorizontalFour, .black⟩ .black ∧
+    right ∈ WinningCells ⟨patternHorizontalFour, .black⟩ .black ∧
+    left ≠ right := by
+  exact straightOpenFour_has_two_distinct_winningCells
+    (b := patternHorizontalFour) (p := .black)
+    (c := (6, 7)) (d := .horizontal) (by native_decide)
+
+example : 2 ≤ (WinningCells ⟨patternHorizontalFour, .black⟩ .black).card := by
+  refine (card_ge_two_iff_exists_distinct (WinningCells ⟨patternHorizontalFour, .black⟩ .black)).2 ?_
+  rcases straightOpenFour_has_two_distinct_winningCells
+      (b := patternHorizontalFour) (p := .black)
+      (c := (6, 7)) (d := .horizontal) (by native_decide) with
+    ⟨left, right, hleft, hright, hne⟩
+  exact ⟨left, hleft, right, hright, hne⟩
+
+example : HasDoubleThreat ⟨patternHorizontalFour, .black⟩ .black := by
+  exact straightOpenFour_hasDoubleThreat
+    (b := patternHorizontalFour) (p := .black)
+    (c := (6, 7)) (d := .horizontal) (by native_decide)
 
 /- Both frozen broken-three variants are recognized separately and are not
    silently included in `straightOpenThree`. -/

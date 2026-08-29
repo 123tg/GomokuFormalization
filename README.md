@@ -6,6 +6,9 @@
 搜索器与 Lean 检查器的输入输出、证书节点格式、协作约定和阶段性验收见
 [`SEARCHER_INTERFACE.md`](SEARCHER_INTERFACE.md)。
 
+队友 C++ 搜索器与当前主线的隔离构建、样例证书和兼容性实测见
+[`TEAM_SEARCHER_COMPATIBILITY.md`](TEAM_SEARCHER_COMPATIBILITY.md)。
+
 This Lean 4 project formalizes a 15x15, unrestricted Gomoku game.
 
 Current modules:
@@ -16,15 +19,18 @@ Current modules:
   stone-count/turn invariants, and strict empty-cell descent.
 - `Gomoku.Game`: strategy types and the inductive `CanForceWin` game semantics.
 - `Gomoku.Tactics`: immediate winning moves, strict open-three/open-four predicates, a
-  proved straight open-four immediate-win theorem for Black, and separate
+  proved color-generic straight open-four immediate-win theorem (with the original
+  Black-specialized wrapper retained), a theorem that both endpoints of a straight open
+  four are distinct winning cells, and separate
   multi-ply (`SafeDoubleOpenThree`) and immediate-response
   (`ImmediateSafeDoubleOpenThree`) defense-by-defense interfaces.
 - `Gomoku.Certificate`: dependent strategy trees and a compact certificate-checking interface.
 - `Gomoku.Search`: the untrusted searcher boundary; only checked `CompactCertificate` values
   can cross into the trusted proof layer.
 - `Gomoku.Engine`: a budgeted, iterative-deepening AND/OR searcher with forced tactical
-  pruning, an optional target-side width limit, a bounded hash transposition table,
-  statistics, and a checked certificate boundary.
+  pruning, an optional target-side width limit, an incrementally updated bitboard cache key,
+  a bounded hash transposition table, explicit resource statuses and a checked certificate
+  boundary. Its cache key includes the complete search configuration.
 - `Gomoku.Parametric`: a separate board-size/win-length-parameterized model with an
   executable two-ply searcher, a proved checker boundary, and a checked 5x5 connect-five
   double-threat example. The original 15x15 API is unchanged.
@@ -33,11 +39,45 @@ Current modules:
   Lean `CompactCertificate`.
 - `Gomoku.Generated`: C++-generated OR/AND/VCF smoke certificates that are accepted by the
   existing Lean checker and connected to `CanForceWin`.
+- `terminalAfterMoveFast` in `Gomoku.Search` gives the engine one total move-to-outcome
+  computation, with a proved equivalence to the ordinary terminal rule for legal moves from
+  non-terminal positions.
+- `Gomoku.Bounded`: an executable finite-depth game semantics with a proved soundness and
+  empty-cell-depth completeness bridge to `CanForceWin`, plus monotonicity of successful depths
+  for iterative deepening.
+- `Gomoku.Engine`: a bounded Lean-side AND/OR candidate searcher with iterative depth, tactical
+  ordering, forced-defense pruning, memoization, and explicit resource statuses.
+- `EngineStats` also records terminal classifications and candidate moves generated, so search
+  runs have a reproducible performance baseline in addition to their found/not-found status.
+- `Gomoku.Engine` also exposes `EngineCacheLookup`, which distinguishes a cache miss from a
+  cached finite-search failure and a cached candidate tree; these states are regression-tested.
 - `Gomoku.Examples`: API-level sanity checks, horizontal/diagonal/boundary/overline examples,
   and executable board tests.
 - `Gomoku.Adversarial`: executable counterexamples and regression checks from the semantic audit.
 - `Gomoku.RuleAudit`: rule, terminal-state, reachability, and malformed-certificate regressions.
 - `Gomoku.PatternAudit`: frozen v1 open-three/open-four patterns with four-direction and near-miss regressions.
+- `Gomoku.SearchAudit`: normal reachable finite-depth search cases, explicit no-candidate results,
+  accepted certificates, a deliberately rejected malformed candidate tree, and comparisons with
+  the independent bounded semantics.
+- `Gomoku.BoundedAudit`: small regressions showing that insufficient depth can return false while
+  the sufficient empty-cell bound agrees with the unbounded game semantics; it also checks draw and
+  opponent-immediate-win cases at more than one depth.
+- `Gomoku.InteropAudit`: the fixed Lean-side adapter for an external stone-array root plus
+  `CompactCertificate`, with accepted and malformed exporter-shaped fixtures. The strict adapter
+  additionally rejects duplicate stone coordinates before checking the certificate.
+- `Gomoku.EngineAudit`: independent engine regressions for a reachable one-move win, an
+  opponent immediate win, a node-budget cutoff, complete two-reply coverage, and a rejected
+  certificate that omits one legal reply.
+- `Gomoku.TerminalAudit`: regressions for immediate wins, a last-move draw, illegal moves after
+  a terminal position, and the fast/ordinary terminal-rule equivalence.
+- `Gomoku.MutationAudit`: deliberately wrong rule variants and concrete counterexamples showing
+  that six-in-a-row, non-horizontal wins, boundary endpoints, and post-terminal moves are not
+  accepted by the formal semantics.
+- `Gomoku.Generated.CppSmoke`, `Gomoku.Generated.CppFork`, `Gomoku.Generated.CppVcf`,
+  `Gomoku.Generated.CppReachable`, and `Gomoku.Generated.CppReachableDoubleThreat`: small
+  certificates emitted by the teammate's C++ searcher and rechecked by Lean. The last two are
+  connected to legal histories; `CppReachableDoubleThreat` covers all 208 legal replies in a
+  genuine two-threat position.
 
 The rule layer uses the standard unrestricted semantics: a contiguous line of at least five stones wins immediately, including six or more in a row; a full board without a winner is a draw. Forbidden-move rules are intentionally outside this version.
 
@@ -99,9 +139,18 @@ depth-2 search smoke test now passes after the position-level terminal-check opt
 pure-Lean searches remain too slow for routine builds because they repeatedly scan all 225 cells;
 the module also exposes `tacticalCandidateMoves` for grouping immediate wins, defensive replies,
 and quiet moves. The fast grouping builds one fixed-size `winningCellsMask` per position, but the
-default search currently uses the cheaper immediate-win ordering. Incremental threat updates,
-cache eviction, certificate DAG sharing, and incremental terminal checks remain planned before
-using larger pure-Lean searches to generate certificates.
+default search currently uses the cheaper immediate-win ordering. The single-move terminal
+classification is now unified by `terminalAfterMoveFast`, whose result is proved equivalent to
+the ordinary terminal rule under the legal non-terminal preconditions used by the searcher.
+Incremental threat updates, cache eviction and certificate DAG sharing remain future work; the
+finite-depth reference search already has a correctness-oriented transposition cache, while the
+separate Lean engine and C++ DFPN implementation provide the optimized experimental paths.
+
+The finite-depth search also exposes a diagnostic `CheckedDepthResult` interface. It distinguishes
+`noCandidate` (no tree found under the current fuel), `rejected` (a generated certificate failed
+the trusted checker), and `accepted` (the checker accepted the certificate). Only the accepted
+case has a soundness theorem, so a finite search failure is never confused with a proof that a
+position is unwinnable.
 
 The fast path also includes `createsFiveFast`: it checks only the at most 20 five-cell windows
 that contain the proposed move. `createsFiveFast_sound` and `createsFiveFast_complete` establish
@@ -111,11 +160,13 @@ Executable regressions cover horizontal, vertical, both diagonals, an edge windo
 insufficient-three-stone counterexample. These are performance and consistency checks, not a
 global 15x15 strategy certificate.
 
-For future transposition tables, `PositionKey` stores the side to move together with a lossless
+For transposition tables, `PositionKey` stores the side to move together with a lossless
 225-cell vector. `boardKey_eq_iff` and `positionKey_eq_iff` prove that equal keys mean equal
 boards or positions; `containsPositionKey` provides the executable table-membership primitive.
 The base `SearchMemo` adapter exposes a fuel/target/position key and checked hit and miss
-lemmas. `Gomoku.Engine` adds a `Std.HashMap` transposition table, carries it through recursive
+lemmas. It is now used by the finite-depth reference search, whose stateful entry point returns
+both the candidate tree and the updated table; cached candidates are still checked at the trusted
+boundary. `Gomoku.Engine` adds a `Std.HashMap` transposition table, carries it through recursive
 AND/OR search and iterative deepening, and keeps node-limit cutoffs distinct from completed
 negative searches so a cutoff is never cached as failure. `engineTacticalCandidateMoves`
 uses the local at-most-20-window detector for immediate wins and forced blocks while retaining
@@ -125,7 +176,10 @@ nodes still enumerate every legal reply. `maxProverMoves` optionally makes targe
 selective, while `maxMemoEntries` prevents new cache entries after a hard insertion limit and
 reports skipped stores. A positive width limit may miss a win, but cannot certify a false one:
 `runCheckedEngine` recompiles a found tree and accepts it only after
-`checkLocalCertificateAt`; `runCheckedEngine_sound` is the theorem-facing boundary.
+`checkLocalCertificateAt`; `runCheckedEngine_sound` is the theorem-facing boundary. Its
+configuration-sensitive compact key prevents a negative result produced by a selective policy
+from suppressing a search under another policy, and `EngineCacheLookup` exposes the three cache
+states explicitly.
 
 The external `cpp/gomoku_solver` keeps the same proof boundary while moving the expensive
 search state to flat bitboards and a native transposition table. Its iterative bounded-depth

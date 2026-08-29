@@ -48,8 +48,12 @@ structure EngineStats where
   cacheHits : Nat := 0
   memoEntries : Nat := 0
   memoStoreSkips : Nat := 0
+  /-- Number of position-level terminal classifications performed on cache misses. -/
+  terminalChecks : Nat := 0
+  /-- Total number of candidate moves handed to a recursive move scanner. -/
+  candidateMoves : Nat := 0
   deriving DecidableEq, Repr
--- 记录访问节点数、缓存命中数、当前缓存条目数和因容量限制跳过的写入数。
+-- 记录节点、缓存、终局判定与递归扫描候选数，用于定位搜索时间和空间瓶颈。
 
 def enginePlayerHash : Player → UInt64
   | .black => 1
@@ -101,11 +105,25 @@ def EnginePositionKey.play (key : EnginePositionKey) (m : Coord) : EnginePositio
 -- 对合法落子增量设置当前玩家占位位并切换轮次，避免每个递归节点重新扫描 225 个格子。
 
 structure EngineSearchKey where
+  config : EngineConfig
   fuel : Nat
   target : Player
   position : EnginePositionKey
   deriving DecidableEq, Repr
--- 把剩余深度、目标玩家和紧凑局面组合为 Lean 引擎专用换位表键。
+-- 把搜索配置、剩余深度、目标玩家和紧凑局面组合为 Lean 引擎换位表键。
+
+def engineSearchKey (cfg : EngineConfig) (fuel : Nat) (s : Position)
+    (target : Player) : EngineSearchKey :=
+  { config := cfg, fuel := fuel, target := target, position := enginePositionKey s }
+-- 为外部调用者构造完整缓存键；递归搜索则直接复用增量紧凑局面。
+
+theorem engineSearchKey_eq_iff (cfg₁ cfg₂ : EngineConfig)
+    (fuel₁ fuel₂ : Nat) (s t : Position) (p q : Player) :
+    engineSearchKey cfg₁ fuel₁ s p = engineSearchKey cfg₂ fuel₂ t q ↔
+      cfg₁ = cfg₂ ∧ fuel₁ = fuel₂ ∧ p = q ∧
+        enginePositionKey s = enginePositionKey t := by
+  simp only [engineSearchKey, EngineSearchKey.mk.injEq]
+-- 缓存键相等必须同时保持配置、深度、目标与 bitboard 局面相等。
 
 def engineBitboardHash (bits : EngineBitboard) : UInt64 :=
   mixHash (mixHash bits.word0 bits.word1) (mixHash bits.word2 bits.word3)
@@ -116,10 +134,20 @@ def enginePositionHash (key : EnginePositionKey) : UInt64 :=
     (mixHash (engineBitboardHash key.black) (engineBitboardHash key.white))
 -- 综合轮次和双方 bitboard 计算紧凑局面哈希。
 
+def engineConfigHash (cfg : EngineConfig) : UInt64 :=
+  mixHash (hash cfg.maxDepth)
+    (mixHash (hash cfg.maxNodes)
+      (mixHash (hash cfg.maxMemoEntries)
+        (mixHash (hash cfg.memoCapacity)
+          (mixHash (hash cfg.maxProverMoves)
+            (mixHash (hash cfg.useThreatOrdering) (hash cfg.useForcedMovePruning))))))
+-- 将所有会影响搜索结果或资源边界的配置字段纳入缓存键哈希。
+
 def engineSearchKeyHash (key : EngineSearchKey) : UInt64 :=
-  mixHash (hash key.fuel)
-    (mixHash (enginePlayerHash key.target) (enginePositionHash key.position))
--- 综合剩余深度、目标玩家和紧凑局面计算搜索键哈希。
+  mixHash (engineConfigHash key.config)
+    (mixHash (hash key.fuel)
+      (mixHash (enginePlayerHash key.target) (enginePositionHash key.position)))
+-- 综合配置、剩余深度、目标玩家和紧凑局面计算搜索键哈希。
 
 instance : Hashable EngineSearchKey where
   hash := engineSearchKeyHash
@@ -131,6 +159,80 @@ instance : Hashable EngineSearchKey where
 abbrev EngineMemo := Std.HashMap EngineSearchKey (Option CandidateTree)
 -- 用标准哈希表保存紧凑搜索键到成功候选树或失败结果的映射。
 
+inductive EngineCacheLookup where
+  | miss
+  | notFound
+  | found (tree : CandidateTree)
+-- 显式区分从未搜索、有限搜索已失败和已找到候选树三种缓存状态。
+
+def EngineCacheLookup.isFound : EngineCacheLookup → Bool
+  | .found _ => true
+  | _ => false
+-- 判断显式缓存查询是否携带候选树。
+
+def EngineCacheLookup.isNotFound : EngineCacheLookup → Bool
+  | .notFound => true
+  | _ => false
+-- 判断显式缓存查询是否记录了当前边界内未找到结果。
+
+def EngineCacheLookup.isMiss : EngineCacheLookup → Bool
+  | .miss => true
+  | _ => false
+-- 判断查询键是否在换位表中不存在。
+
+def engineCacheLookup (memo : EngineMemo) (key : EngineSearchKey) :
+    EngineCacheLookup :=
+  match memo.get? key with
+  | none => .miss
+  | some none => .notFound
+  | some (some tree) => .found tree
+-- 将嵌套的 `Option` 查询结果转换为不会混淆的三值视图。
+
+theorem engineCacheLookup_insert_found
+    (memo : EngineMemo) (key : EngineSearchKey) (tree : CandidateTree) :
+    engineCacheLookup (memo.insert key (some tree)) key = .found tree := by
+  simp [engineCacheLookup]
+-- 证明插入成功树后，同键查询必然返回该树。
+
+theorem engineCacheLookup_insert_notFound
+    (memo : EngineMemo) (key : EngineSearchKey) :
+    engineCacheLookup (memo.insert key none) key = .notFound := by
+  simp [engineCacheLookup]
+-- 证明插入搜索失败后，同键查询不会被解读成未搜索。
+
+theorem engineCacheLookup_miss_iff
+    (memo : EngineMemo) (key : EngineSearchKey) :
+    engineCacheLookup memo key = .miss ↔ memo[key]? = none := by
+  unfold engineCacheLookup
+  cases h : memo[key]? with
+  | none => simp [h]
+  | some result =>
+      cases result <;> simp [h]
+-- 刻画显式未命中与底层哈希表缺失条目的等价性。
+
+theorem engineCacheLookup_notFound_iff
+    (memo : EngineMemo) (key : EngineSearchKey) :
+    engineCacheLookup memo key = .notFound ↔ memo[key]? = some none := by
+  unfold engineCacheLookup
+  cases h : memo[key]? with
+  | none => simp [h]
+  | some result =>
+      cases result <;> simp [h]
+-- 刻画显式失败与底层哈希表存储 `some none` 的等价性。
+
+theorem engineCacheLookup_found_iff
+    (memo : EngineMemo) (key : EngineSearchKey) (tree : CandidateTree) :
+    engineCacheLookup memo key = .found tree ↔
+      memo[key]? = some (some tree) := by
+  unfold engineCacheLookup
+  cases h : memo[key]? with
+  | none => simp [h]
+  | some result =>
+      cases result with
+      | none => simp [h]
+      | some cachedTree => simp [h]
+-- 刻画显式成功与底层哈希表存储具体候选树的等价性。
+
 def emptyEngineMemo (capacity : Nat := 4096) : EngineMemo :=
   Std.HashMap.emptyWithCapacity capacity
 -- 按给定初始容量创建空引擎换位表；容量只影响预分配，不是硬上限。
@@ -140,13 +242,17 @@ structure EngineState where
   nodes : Nat := 0
   cacheHits : Nat := 0
   memoStoreSkips : Nat := 0
+  terminalChecks : Nat := 0
+  candidateMoves : Nat := 0
 -- 保存递归搜索期间共享的换位表以及累计运行计数器。
 
 def EngineState.stats (state : EngineState) : EngineStats :=
   { nodes := state.nodes
     cacheHits := state.cacheHits
     memoEntries := state.memo.size
-    memoStoreSkips := state.memoStoreSkips }
+    memoStoreSkips := state.memoStoreSkips
+    terminalChecks := state.terminalChecks
+    candidateMoves := state.candidateMoves }
 -- 从可变式引擎状态提取对外报告所需的只读统计信息。
 
 def engineHasBudget (cfg : EngineConfig) (state : EngineState) : Bool :=
@@ -160,6 +266,14 @@ def engineRecordVisit (state : EngineState) : EngineState :=
 def engineRecordCacheHit (state : EngineState) : EngineState :=
   { state with cacheHits := state.cacheHits + 1 }
 -- 把换位表命中计数增加一。
+
+def engineRecordTerminalCheck (state : EngineState) : EngineState :=
+  { state with terminalChecks := state.terminalChecks + 1 }
+-- 记录一次只在缓存未命中时执行的局面终局分类。
+
+def engineRecordCandidateMoves (state : EngineState) (count : Nat) : EngineState :=
+  { state with candidateMoves := state.candidateMoves + count }
+-- 累加交给证明方或对手递归扫描器的候选落子数。
 
 def engineMemoCanInsert (cfg : EngineConfig) (state : EngineState) : Bool :=
   decide (cfg.maxMemoEntries = 0 ∨ state.memo.size < cfg.maxMemoEntries)
@@ -232,11 +346,30 @@ theorem mem_engineCandidateMoves_iff (cfg : EngineConfig) (s : Position)
       mem_orderedCandidateMoves_iff]
 -- 证明无论采用哪种排序，引擎候选都与当前玩家的全部快速合法候选等价。
 
+theorem mem_engineCandidateMoves_of_legal (cfg : EngineConfig)
+    {s : Position} {c : Coord} (hlegal : legalMove s c) :
+    c ∈ engineCandidateMoves cfg s := by
+  rw [mem_engineCandidateMoves_iff, mem_candidateMovesFast_iff]
+  exact ⟨rfl, mem_allCoords c, hlegal⟩
+-- 证明对手节点的引擎候选覆盖每一个合法应手，战术排序不会破坏 AND 分支完备性。
+
 def engineLimitProverMoves (cfg : EngineConfig)
     (moves : Array Coord) : Array Coord :=
   if cfg.maxProverMoves = 0 then moves
   else (moves.toList.take cfg.maxProverMoves).toArray
 -- 在证明方节点应用可选宽度上限；零表示保留传入数组的全部落子。
+
+theorem mem_engineLimitProverMoves_implies
+    {cfg : EngineConfig} {moves : Array Coord} {m : Coord}
+    (h : m ∈ engineLimitProverMoves cfg moves) :
+    m ∈ moves := by
+  by_cases hzero : cfg.maxProverMoves = 0
+  · simpa [engineLimitProverMoves, hzero] using h
+  · have htake : m ∈ moves.toList.take cfg.maxProverMoves := by
+      simpa [engineLimitProverMoves, hzero] using h
+    have hlist : m ∈ moves.toList := List.mem_of_mem_take htake
+    simpa using hlist
+-- 证明宽度截断只删除候选，绝不会生成原数组中不存在的落子。
 
 /- Selective pruning is used only at target-player nodes.  Immediate wins are
    sufficient by themselves.  If the opponent already has a one-move win and
@@ -256,6 +389,31 @@ def engineProverCandidateMoves (cfg : EngineConfig)
   else
     engineLimitProverMoves cfg (engineCandidateMoves cfg s)
 -- 为目标玩家选择搜索分支：优先胜着，其次被迫防守，最后普通步，并可施加选择性宽度限制。
+
+theorem mem_engineProverCandidateMoves_legal
+    (cfg : EngineConfig) (s : Position) {m : Coord}
+    (h : m ∈ engineProverCandidateMoves cfg s) :
+    legalMove s m := by
+  have hcandidate : m ∈ orderedCandidateMoves s s.turn := by
+    unfold engineProverCandidateMoves at h
+    by_cases hprune : cfg.useForcedMovePruning
+    · simp only [if_pos hprune] at h
+      unfold engineMoveGroups at h
+      split at h
+      · have hgroup := mem_engineLimitProverMoves_implies h
+        exact (Array.mem_filter.mp hgroup).1
+      · split at h
+        · have hgroup := mem_engineLimitProverMoves_implies h
+          exact (Array.mem_filter.mp hgroup).1
+        · have hgroup := mem_engineLimitProverMoves_implies h
+          exact (Array.mem_filter.mp hgroup).1
+    · simp only [if_neg hprune] at h
+      have hengine := mem_engineLimitProverMoves_implies h
+      exact (mem_engineCandidateMoves_iff cfg s m).mp hengine |>
+        (mem_orderedCandidateMoves_iff s s.turn m).mpr
+  exact ((mem_orderedCandidateMoves_iff s s.turn m).mp hcandidate |>
+    (mem_candidateMovesFast_iff s s.turn m).mp).2.2
+-- 证明证明方经战术剪枝和宽度限制后保留的每个候选仍然是合法落子。
 
 inductive EngineOutcome where
   | found (tree : CandidateTree)
@@ -292,15 +450,15 @@ mutual
       (fuel : Nat) (s : Position) (target : Player)
       (positionKey : EnginePositionKey) : EngineStep :=
     let key : EngineSearchKey :=
-      { fuel := fuel, target := target, position := positionKey }
-    match state.memo.get? key with
-    | some result =>
-        { outcome :=
-            match result with
-            | some tree => .found tree
-            | none => .notFound
+      { config := cfg, fuel := fuel, target := target, position := positionKey }
+    match engineCacheLookup state.memo key with
+    | .found tree =>
+        { outcome := .found tree
           state := engineRecordCacheHit state }
-    | none =>
+    | .notFound =>
+        { outcome := .notFound
+          state := engineRecordCacheHit state }
+    | .miss =>
         if engineHasBudget cfg state then
           let computed := searchWithEngineMiss cfg
             (engineRecordVisit state) fuel s target positionKey
@@ -319,6 +477,7 @@ mutual
   partial def searchWithEngineMiss (cfg : EngineConfig) (state : EngineState)
       (fuel : Nat) (s : Position) (target : Player)
       (positionKey : EnginePositionKey) : EngineStep :=
+    let state := engineRecordTerminalCheck state
     match terminal s with
     | some out =>
         if out = winner target then
@@ -331,11 +490,15 @@ mutual
             { outcome := .notFound, state := state }
         | depth + 1 =>
             if s.turn = target then
-              searchEngineProver cfg state depth s target positionKey
-                (engineProverCandidateMoves cfg s).toList
+              let moves := engineProverCandidateMoves cfg s
+              searchEngineProver cfg
+                (engineRecordCandidateMoves state moves.size)
+                depth s target positionKey moves.toList
             else
-              let forest := searchEngineOpponent cfg state depth s target positionKey
-                (engineCandidateMoves cfg s).toList
+              let moves := engineCandidateMoves cfg s
+              let forest := searchEngineOpponent cfg
+                (engineRecordCandidateMoves state moves.size)
+                depth s target positionKey moves.toList
               match forest.outcome with
               | .found children =>
                   { outcome := .found (.opponentMoves s children)
@@ -353,7 +516,7 @@ mutual
     | [] =>
         { outcome := .notFound, state := state }
     | m :: rest =>
-        if createsFiveFast s.board s.turn m then
+        if terminalAfterMoveFast s m = some (winner s.turn) then
           { outcome := .found (.proverMove s m (.terminal (play s m)))
             state := state }
         else
@@ -375,7 +538,7 @@ mutual
     | [] =>
         { outcome := .found [], state := state }
     | m :: rest =>
-        if createsFiveFast s.board s.turn m then
+        if terminalAfterMoveFast s m = some (winner s.turn) then
           { outcome := .notFound, state := state }
         else
           let child := searchWithEngineKeyed cfg state depth (play s m) target

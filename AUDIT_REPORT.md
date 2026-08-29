@@ -7,7 +7,7 @@
 - Lean toolchain：`leanprover/lean4:v4.33.0`
 - mathlib：`v4.33.0`
 - 基线分支：`codex/current-baselin`
-- 基线提交：`1553bae Disable GitHub Pages documentation deployment`
+- 基线提交：`9291f60 Audit rules and certificate interfaces`
 - 基线构建：`lake build` 成功
 - 目标棋盘：固定 15×15
 - 信任策略：关键定理不依赖 `native_decide`；测试文件可以使用它
@@ -110,15 +110,56 @@
     `immediateWinningMovesFirst_mem_legal` 证明扫描数组中的每个候选都满足当前轮次和
     `legalMove`，`createsFiveFast_terminal_of_immediateCandidate` 再证明快速命中对应
     真实终局胜着。因此该优化只影响不可信搜索器的运行时间，不扩大证书检查器的信任边界。
-29. 为后续置换表加入 `PositionKey` 精确键：轮次和固定长度 225 的 `Vector Cell` 均被
-    保留，`boardKey_eq_iff` 与 `positionKey_eq_iff` 排除了键碰撞；
-    `containsPositionKey_true_iff` 把数组扫描结果对应到明确的索引见证。当前只验证键和
-    命中接口，尚未将其用于搜索剪枝，因此不会引入缓存错误传播。
-30. 新增 `SearchMemo`/`SearchKey` 缓存适配层。键包含剩余深度、目标玩家和完整
-    `PositionKey`；`memoLookup_insert_same` 与 `memoLookup_insert_other_of_ne` 验证命中和
-    未命中行为，`checkedDepthCertificateForCached_sound` 证明缓存返回的结果仍必须通过
-    局部证书检查才能推出 `CanForceWin`。这一步没有把缓存直接接入递归搜索，也没有把
-    缓存内容提升为可信证明。
+29. 为置换表加入 `PositionKey` 精确键：轮次和固定长度 225 的 `Vector Cell` 均被保留，
+    `boardKey_eq_iff` 与 `positionKey_eq_iff` 排除了键碰撞；`containsPositionKey_true_iff`
+    把数组扫描结果对应到明确的索引见证。
+30. `SearchMemo`/`SearchKey` 已接入带状态的有限深度递归参考搜索。键包含剩余深度、目标
+   玩家和完整 `PositionKey`；`memoLookup_insert_same` 与 `memoLookup_insert_other_of_ne`
+   验证命中和未命中行为；新增 `searchKey_eq_iff` 证明剩余深度、目标方和完整局面任一不同都会
+   产生不同键。`searchCandidateTreeMemoized` 返回候选树及更新后的缓存，
+   `checkedDepthCertificateForCached_sound` 证明缓存结果仍必须通过局部证书检查才能推出
+   `CanForceWin`。缓存内容仍是不可信候选数据，不会直接成为定理。
+31. `Gomoku.InteropAudit` 固定了外部搜索器常用的棋子数组根局面适配：
+   `positionFromStones` 将数组折叠成 Lean 棋盘，`checkExternalLocalCertificate` 再调用
+   当前可信的局部证书检查器。一个 C++ 导出器形状的两节点证书通过并推出局部
+   `CanForceWin`；子节点位置故意写错的同形证书被拒绝。这验证了搜索器和 Lean 之间的
+   数据边界，但不把棋子数组的历史来源或 C++ 算法纳入可信基础。
+32. 对 `origin/feature/cpp-vcf-search` 的隔离实测已完成：C++ 单元测试通过，
+   `immediate_win`、`opponent_fork` 和 `open_four_vcf` 三个样例均生成证书，且生成的
+   Lean 文件在当前主线下全部编译通过。详细命令、输出和限制见
+   `TEAM_SEARCHER_COMPATIBILITY.md`；这确认了接口兼容性，但仍不是全局先手必胜证明。
+33. `Gomoku.Engine` 已接入当前主线，提供带节点预算、迭代加深、威胁排序、目标节点选择性
+   剪枝和精确局面缓存的 Lean 端候选搜索器。`runCheckedEngine_sound` 明确规定只有通过
+   `checkLocalCertificateAt` 的结果才能推出 `CanForceWin`；`Gomoku.EngineAudit` 对真实可达的
+   一步胜、对手立即胜和节点预算截止分别做了回归。该引擎仍是有限资源候选生成器，不是完整
+   15×15 求解器。另证明了 `mem_engineProverCandidateMoves_legal`，确保威胁筛选和宽度截断
+   不会把非法坐标送入搜索。
+34. 队友 C++ 搜索器生成的 `CppSmoke`、`CppFork` 和 `CppVcf` 三个局部证书已保存到
+    `Gomoku/Generated/` 并纳入主库构建；它们分别覆盖一步胜、多个对手应手和连续威胁。
+    三个文件均通过当前 Lean 检查器，但根局面是局部样例，不能推出空棋盘黑棋必胜；
+    C++ 搜索器源码和运行资源限制仍需单独维护。
+35. 对 Lean 端引擎的对手分支增加了显式覆盖定理 `mem_engineCandidateMoves_of_legal`：
+    只要着法合法，它就一定出现在对手节点的候选数组中。`Gomoku.EngineAudit` 用只有两个
+    空点的双威胁局面验证引擎生成的证书访问两个应手并通过；将其中一个应手删掉后，
+    `checkLocalCertificateAt` 明确返回 `false`。这不限制目标方的宽度剪枝，但保证剪枝不会
+    被误用于对手的全称分支。
+36. 队友 C++ 搜索器新增 `reachable_immediate.txt` 样例并生成 `CppReachable.lean`：
+    根局面由黑白双方各四手的合法历史构造。`InteropAudit` 用有限位置比较器证明该数组
+    根局面与 `auditReachableImmediatePosition` 相同，再复用 `Reachable` 定理；生成证书仍
+    由 `checkLocalCertificateAt` 独立检查。这是第一个同时具备“外部生成”和“规则层可达性”
+    连接的回归，但仍只是一步局部胜势。
+37. 队友 C++ 搜索器新增 `reachable_double_threat.txt` 样例并生成 `CppReachableDoubleThreat.lean`：
+    根局面由 17 手合法交替历史构造，黑棋有两条独立四连，白棋轮到行动。Lean 检查了生成的 417
+    节点证书，并分别执行了合法白棋应手数与证书应手数的回归断言，二者均为 208；故意删除一个
+    应手后，`checkLocalCertificateAt` 返回 `false`。这证明了当前接口能承接“真实可达双威胁”的
+    局部证书，但不扩展为从空棋盘开始的全局结论。
+38. 新增 `Gomoku.MutationAudit` 作为规则变异审查模块。它不修改正式定义，而是定义四个故意
+    错误的替代规则，并由 Lean 具体证明：六连会被“恰好五子”错误规则漏掉，竖线会被“只查横线”
+    错误规则漏掉，边界四子会被“出界即开放”错误规则误报为活四，终局后的空点会被“忽略终局”
+    错误规则误报为合法。该模块已加入 `Gomoku.lean`，随主库构建。
+39. 规则层新增 `Position.reachable_winner_turn`，将“终局赢家必须是最后落子者”从口头约定
+    提升为正式不变量；`RuleAudit` 用真实可达黑胜和白胜历史分别回归，证明赢家后的轮次一定
+    属于另一方。这一结论可用于审查外部搜索器导入的终局节点。
 
 ## 待处理问题
 
@@ -245,13 +286,14 @@ s.turn = p ∧ legalMove s m
 ### A8：递归搜索缓存状态（已修正）
 
 基础 `SearchMemo` 已能由递归搜索携带；新增 `Gomoku.Engine` 又把生产型试验入口升级为
-`Std.HashMap EngineSearchKey (Option CandidateTree)`。`EngineSearchKey` 保留“剩余深度 +
-目标方 + 完整局面”，但把 225 格对象向量压缩为轮次和双方共八个 `UInt64` 占位字；根棋盘
+`Std.HashMap EngineSearchKey (Option CandidateTree)`。`EngineSearchKey` 保留“完整搜索配置 +
+剩余深度 + 目标方 + 完整局面”，并把 225 格对象向量压缩为轮次和双方共八个 `UInt64` 占位字；根棋盘
 只扫描一次，递归落子增量更新。哈希表命中仍做精确键比较。引擎明确区分找到候选、完整深度内未找到和节点
 预算截断三种结果，预算截断不会写入负向缓存。缓存中的正向树可能来自不可信搜索状态，
 因此 `runCheckedEngine` 仍会把它编译为紧凑证书并调用 `checkLocalCertificateAt`；只有检查
 通过后，`runCheckedEngine_sound` 才推出 `CanForceWin`。第二轮优化增加 `maxMemoEntries`
-硬写入上限；饱和时跳过新键并统计 `memoStoreSkips`，但尚无替换/淘汰策略。目标方节点会
+硬写入上限；饱和时跳过新键并统计 `memoStoreSkips`，但尚无替换/淘汰策略。
+`EngineCacheLookup` 还明确区分未命中、已搜索失败和已找到候选树，避免诊断上混淆。目标方节点会
 优先并剪枝到立即胜着或强制防守点，也可用 `maxProverMoves` 做选择性宽度限制；对手节点仍
 完整枚举合法应手。一步成五直接构造终局叶子，最终仍由同一检查器复核。选择性宽度可能
 漏解，所以受限搜索的 `notFound` 不是不可胜证明。紧凑键边界回归验证增量编码与重新扫描
@@ -287,6 +329,83 @@ bitboard、轮次、目标方和剩余深度，所以 Zobrist 碰撞只影响哈
 会信任 Lean 原生编译执行路径。核心 soundness 定理本身仍不依赖 C++ 或 `native_decide`，
 但真实大证书在最终可信度和构建成本上仍需单独选择检查执行方式。
 
+### A10：带缓存的参考递归搜索（已完成，仍非高性能求解器）
+
+`SearchMemo` 现在已经接入有限深度递归搜索。`searchCandidateTreeMemoized` 返回候选树和
+搜索过程中学习到的新缓存；缓存命中直接复用同一键对应的结果，未命中则递归计算并把结果写回缓存。
+`searchCandidateTree` 保留为空缓存的兼容入口，`searchCandidateTreeCached` 允许调用者提供已有缓存。
+
+缓存仍然只保存不可信的 `CandidateTree`。无论结果来自递归计算还是缓存命中，
+`checkedDepthCertificateForCached` 都会重新编译并交给 `checkLocalCertificateAt`；因此缓存不会扩大
+可信基础。现有 `memoLookup_insert_same`、`memoLookup_insert_other_of_ne`、命中/未命中引理，
+以及 SearchAudit 中的真实局面、错误目标和恶意候选树测试，固定了当前边界。
+
+尚未完成的是性能和更强语义层：缓存键无碰撞已经由完整局面键保证，但还需要测量命中率，
+证明带缓存和空缓存搜索在所有结果上的更强等价关系，并加入增量威胁/终局信息后再尝试更大局面。
+
+### A11：有限深度搜索结果的状态区分（已完成）
+
+`checkedDepthCertificateFor` 适合给程序使用，但它把“没有生成候选树”和“生成的证书没有通过
+检查”都压成 `none`。本轮在 `Gomoku.Search` 中新增 `CheckedDepthResult` 与
+`checkedDepthResultFor`，明确返回三种状态：
+
+- `noCandidate`：搜索器在给定燃料下没有生成候选策略树；
+- `rejected certificate`：搜索器生成了候选证书，但 Lean 检查器拒绝了它；
+- `accepted certificate`：候选证书通过了局部根、节点、边、终局和对手应对覆盖检查。
+
+`checkedDepthResultFor_accepted_iff`、`checkedDepthResultFor_noCandidate_iff` 和
+`checkedDepthResultFor_rejected_iff` 分别刻画三种结果；只有 `accepted` 分支有
+`checkedDepthResultFor_sound`，它通过已有的
+`checkedDepthCertificateFor_sound` 和 `local_certificate_at_sound` 得到 `CanForceWin`。
+因此，`noCandidate` 只说明当前搜索资源或深度没有给出证据，不能解释成目标方不存在必胜策略。
+
+`Gomoku.SearchAudit` 增加了搜索和缓存回归：
+
+1. 黑白双方各走四手后，黑棋有一步合法胜着；深度 1 参考搜索返回 `accepted`，并由 Lean
+   证明该局面 `CanForceWin`。
+2. 一条合法交替历史使白棋在其回合拥有立即胜着；以黑棋为目标的深度 1 搜索返回
+   `noCandidate`，普通 Option 接口返回 `none`。这验证了搜索器不会忽略对手的立即胜利分支。
+3. 空缓存搜索会返回学习到的缓存；错误目标、错误深度和错误局面的缓存键不会被复用；正确键下的
+   恶意候选树即使命中缓存也会被证书检查器拒绝。
+
+4. `Gomoku.Tactics` 新增颜色无关的 `straightOpenFour_immediate` 和
+   `singleOpenFour_forces_win_any_player`：白棋直线活四样例也通过了同一套立即胜和博弈语义证明，
+   因此局部定理不再只对黑棋可复用。
+
+这些回归仍然是局部/有限深度测试，不是从空棋盘开始的全局证明，也不替代外部 C++ 搜索器的性能测试。
+
+### A12：引擎对手分支的完整覆盖（已完成）
+
+`engineCandidateMoves` 只改变合法着法的排列顺序，因此 `mem_engineCandidateMoves_of_legal`
+给出了对手节点的覆盖保证：任何满足 `legalMove s c` 的着法都出现在候选数组中。目标方一侧的
+`engineProverCandidateMoves` 可以按立即胜着、必须防守着法和宽度预算进行选择性剪枝；这会使搜索
+结果变得不完备，但不会让通过证书的结论变得不可靠。
+
+`Gomoku.EngineAudit` 在人工构造的双威胁局面中检查了两个白棋分支，并把漏掉一个分支的证书作为
+反例。当前还没有证明剪枝搜索与未剪枝搜索在所有成功结果上的完备性等价，也没有进行大规模
+局面性能评测。
+
+### A13：有限深度语义与空位数上界（已完成）
+
+新增的 `Gomoku.Bounded` 把“最多再走多少步”直接定义成可执行的布尔语义，且只使用
+`candidateMovesFast` 所代表的合法着法。`boundedCanForceWin_sound` 证明布尔结果为 `true`
+时一定能构造 `CanForceWin`；反方向的 `canForceWin_bounded_complete` 以每次合法落子恰好
+减少一个空点为归纳依据，证明任何 `CanForceWin s p` 都会在
+`Board.emptyCount s.board + 1` 深度内返回 `true`。因此：
+
+- 固定深度的 `false` 只表示深度不足，不能解释为目标方必败；
+- `boundedCanForceWin_mono` 和 `boundedCanForceWin_mono_of_le` 证明如果某个深度返回 `true`，
+  任意更大深度仍返回 `true`，为迭代加深提供了数学依据；
+- `boundedCanForceWin_terminal_iff` 和 `boundedCanForceWin_false_of_terminal_ne` 统一刻画
+  终局节点，保证和棋或对手胜利不会因增加燃料而变成目标方胜利；
+- 在空位数加一的充分深度上，有限语义与 `CanForceWin` 完全等价；
+- 该定理是数学基准，不声称 15×15 的计算在实际资源内可完成。
+
+`Gomoku.BoundedAudit` 用两空点双威胁局面验证深度 0 返回 `false`、深度 2 和 3 返回 `true`，
+并把同一局面的有限语义与候选树搜索的 `accepted` 状态进行对照；终局和棋及对手已有立即
+胜着的局面在不同燃料下均保持 `false`。它没有把有限计算结果直接提升为全局定理，仍然
+要求候选证书通过现有检查器。
+
 ## 审计完成标准
 
 - 每个已发现问题都有明确的修复状态。
@@ -307,7 +426,7 @@ bitboard、轮次、目标方和剩余深度，所以 Zobrist 碰撞只影响哈
 和棋或对手胜利局面当作目标方的强制胜利。满盘着色的昂贵判定只在一个命名定理中执行，
 其余测试复用该定理，避免回归构建重复扫描棋盘。
 
-全工程使用已安装的 Lean 4.33.0 工具链直接运行 `lake build` 已通过（8718 个目标）。
+全工程使用已安装的 Lean 4.33.0 工具链直接运行 `lake build` 已通过（8732 个目标）。
 PowerShell 中通过 elan 包装器运行时会额外尝试联网检查更新；网络不可用时会在真正构建前失败，
 这不是 Lean 源码错误。输出仍有既有的文件头、长行和测试模块使用 `native_decide` 警告；
 未发现 `sorry`、`admit`、`axiom` 或 `unsafe`。这些警告不影响本轮 Lean 类型检查，
@@ -383,3 +502,77 @@ PowerShell 中通过 elan 包装器运行时会额外尝试联网检查更新；
 `playMoves_emptyCount_add_length` 证明任意合法着法序列都满足：最终空位数加上序列长度
 等于初始空位数。满盘和棋例调用该定理并单独执行检查，确认 225 步回放后空位数为零；
 这比只检查最终棋盘的 `full` 谓词更直接地审计了“每一步恰好占用一个空点”。
+
+## 本轮几何补充（2026-08-29）
+
+为补齐活四到立即胜点之间的几何桥接，本轮在 `Gomoku.Geometry` 增加了两个不依赖棋盘内容
+的引理：`step_compose` 证明同一方向的两个合法步进可以复合，
+`step_left_endpoint_shift` 证明从左端点重新编号时五个位置的坐标保持一致；同时，
+`step_neg_one_ne_four` 排除了两个端点落到同一坐标的可能性。
+
+在 `Gomoku.Tactics` 中，原有的 `straightOpenFour_has_winningCell` 接口保持不变，内部补充了
+`straightOpenFour_left_has_winningCell` 和 `straightOpenFour_right_has_winningCell`，并由
+`straightOpenFour_has_two_distinct_winningCells` 汇总为正式定理：每条直线型活四的两个端点
+都是不同的 `WinningCells`。`Gomoku.PatternAudit` 对中心横向活四增加了定理级回归。
+
+这项补充修复了“只证明至少一个端点可赢、但没有证明两个端点不同”的几何缺口；它仍然只说明
+局部活四有两个立即胜点，不涉及轮到谁、对手是否已有更快胜势，也不构成 15×15 全局必胜结论。
+
+## 本轮有限语义桥接（2026-08-29）
+
+`Gomoku.Bounded` 新增 `checkedDepthCertificateFor_bounded` 和
+`checkedDepthCertificateForCached_bounded`。它们先使用已有的证书检查可靠性定理得到
+`CanForceWin`，再由 `canForceWin_bounded_complete` 和深度单调性推出：在
+`Board.emptyCount position.board + 1 ≤ fuel` 时，独立的 `boundedCanForceWin fuel`
+也返回 `true`。这把“候选证书通过检查”和“完整有限 AND/OR 参考语义”连接起来，同时保留
+两者职责差异：较浅的候选搜索可能因深度或启发式而返回 `none`，而任意深度的候选搜索与
+有限语义的完备等价仍是后续工作。`BoundedAudit` 增加了普通缓存和空缓存两条具体回归；
+原有两空点局面的深度 2 成功测试仍保留，因为 `emptyCount + 1` 是保守充分上界而不是最小深度。
+
+## 本轮引擎缓存审计（2026-08-29）
+
+审查发现 `EngineMemo` 原先只按局面、目标和剩余深度索引，但引擎配置会改变候选搜索：
+例如选择性宽度限制可能返回 `none`，而完整候选配置仍能找到证书。若直接复用这种失败结果，
+会产生不必要的假阴性。现已引入 `EngineSearchKey`，在查询键之外保存完整 `EngineConfig`，
+并让递归引擎按该键读写缓存。`EngineAudit` 构造了一个选择性配置下的失败条目，验证普通
+配置不会命中它而会重新找到一步胜证书。该修复保护的是搜索结果的配置一致性；证书的数学
+可靠性仍然只来自 `checkLocalCertificateAt` 和 `runCheckedEngine_sound`。
+
+在同一审查中又把缓存查询的三种情况显式化为 `EngineCacheLookup`：`miss`（没有查过）、
+`notFound`（已在当前配置/深度下搜索但没有候选树）和 `found tree`（缓存了候选树）。
+`EngineAudit` 对三种状态分别做了回归测试。这样调试输出不会把“没有缓存”误读成“搜索失败”，
+也不会把缓存的 `found` 结果绕过证书检查器；这项分类仍不改变搜索器本身不完备的事实。
+
+## 本轮外部输入审查（2026-08-29）
+
+`boardFromStones` 的基础适配会按数组顺序写入棋盘，若数组重复某个坐标，后一次记录会覆盖前一次。
+这对任意局部根是兼容行为，但不能作为导出器数据质量保证。本轮新增
+`externalStoneCoordsNodup` 和 `checkExternalLocalCertificateStrict`：严格入口先用可执行的去重长度
+检查拒绝重复坐标，再复用原有局部证书检查器。`InteropAudit` 同时保留同一重复数组在普通入口下
+通过、严格入口下拒绝的反例，确认两种接口的信任边界没有混淆。
+
+## 本轮增量终局接口（2026-08-29）
+
+搜索引擎原先在不同位置分别检查“快速成五”和完整 `terminal`。本轮新增
+`terminalAfterMoveFast`，将一次候选着法的四种结果统一为一个可执行分类：非法着法返回
+`none`，合法落子成五返回当前落子方胜利，合法落子填满棋盘且无人胜返回和棋，其余情况
+返回 `none`。这不是把任意棋盘都当成合法历史；它只是一个总函数，合法性和非终局前提
+仍由调用者或证书检查器负责。
+
+定理 `terminalAfterMoveFast_eq_terminal` 证明：若父局面非终局且着法合法，快速分类与
+完整规则 `terminal (play s m)` 相等。证明显式排除了父局面的旧胜势、另一方在落子后
+凭空获得胜势以及“成五”和“和棋”同时发生的歧义。引擎的目标方和对手立即胜短路现在
+统一调用该接口，减少了搜索器与规则层之间的重复判断。
+
+`Gomoku.TerminalAudit` 增加四类回归：一步成五、最后一格和棋、终局后非法着法，以及
+两个正常非终局局面上的快速/完整终局结果相等。它们验证了这次接口重构没有改变证书
+检查器的信任边界，也没有把资源不足的搜索结果解释成必败。
+
+引擎的 `EngineStats` 现在另外记录 `terminalChecks` 和 `candidateMoves`。前者统计缓存
+未命中后实际做的局面终局分类，后者统计交给递归扫描器的候选着法总数；缓存命中不会
+虚增这两个数字。`EngineAudit` 在双应手局面上验证成功搜索的两个计数均为正。它们是
+性能和调试指标，不参与 `runCheckedEngine_sound`，也不把“访问了很多节点”误作数学证明。
+
+限制：该缓存目前没有改写 `Gomoku.Engine` 的默认搜索路径，也没有提供运行时加速数字。
+因此本审查只确认“如果以后接入，缓存值不会改变数学结果”，不声称搜索器已经具备完整
+增量威胁维护或能够解决 15×15 全局棋局。

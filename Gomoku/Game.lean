@@ -76,6 +76,12 @@ theorem not_canForceWin_of_terminal_ne
   intro hwin
   exact hne ((canForceWin_terminal_iff hterm).mp hwin)
 
+theorem not_canForceWin_of_draw {s : Position}
+    (hdraw : terminal s = some .draw) (target : Player) :
+    ¬ CanForceWin s target := by
+  apply not_canForceWin_of_terminal_ne hdraw
+  cases target <;> decide
+
 /- If it is the opponent's turn and one of their legal moves ends the game in
    their favour, the target cannot have a forcing win.  This is the game-level
    form of the usual "must answer an immediate threat" rule and is useful for
