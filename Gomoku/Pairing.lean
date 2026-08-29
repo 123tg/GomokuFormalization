@@ -108,6 +108,26 @@ def respondsTo (p : Pairing) (s : Position) (m r : Coord) : Prop :=
     (pair.1 = m → (play s m).board.cell pair.2 = .empty → r = pair.2) ∧
     (pair.2 = m → (play s m).board.cell pair.1 = .empty → r = pair.1)
 
+/-- 格子 c 是否不在任何配对中（分层配对时黑棋首着保持未配对）。 -/
+def unpairedCell (p : Pairing) (c : Coord) : Bool :=
+  decide (∀ pair, pair ∈ p.pairs → pair.1 ≠ c ∧ pair.2 ≠ c)
+
+theorem unpairedCell_true_iff (p : Pairing) (c : Coord) :
+    unpairedCell p c = true ↔
+      ∀ pair, pair ∈ p.pairs → pair.1 ≠ c ∧ pair.2 ≠ c := by
+  simp [unpairedCell]
+
+/-- 若黑棋刚走的 m 不在任何配对中，则任何合法回应都满足 respondsTo（前提空洞）。 -/
+theorem respondsTo_of_unpaired {p : Pairing} {s : Position} {m r : Coord}
+    (hunpaired : ∀ pair, pair ∈ p.pairs → pair.1 ≠ m ∧ pair.2 ≠ m) :
+    respondsTo p s m r := by
+  intro pair hp
+  constructor
+  · intro h1 hempty
+    exact False.elim ((hunpaired pair hp).1 h1)
+  · intro h2 hempty
+    exact False.elim ((hunpaired pair hp).2 h2)
+
 /-- 窗口 w（长度 5 的格子列表）是否包含一个完整配对。 -/
 def windowCovered (p : Pairing) (w : List Coord) : Bool :=
   decide (∃ pair, pair ∈ p.pairs ∧ pair.1 ∈ w ∧ pair.2 ∈ w)
@@ -180,6 +200,25 @@ def Invariant (p : Pairing) (s : Position) : Prop :=
 theorem noBlackPair_of_invariant {p : Pairing} {s : Position}
     (h : Invariant p s) : NoBlackPair p s :=
   h.2.1
+
+/-- 若所有配对格都不是黑格（黑子全部未配对），则不变式成立。
+用于分层配对：白棋回应后的局面中，黑棋只有首着且其未配对。 -/
+theorem invariant_of_validAt_unpaired {p : Pairing} {s : Position}
+    (hval : ValidAt s p)
+    (hnoBlackPaired : ∀ pair, pair ∈ p.pairs →
+      s.board.cell pair.1 ≠ .stone .black ∧ s.board.cell pair.2 ≠ .stone .black) :
+    Invariant p s := by
+  unfold Invariant
+  constructor
+  · exact proper_of_validAt hval
+  · constructor
+    · intro pair hp hboth
+      exact ((hnoBlackPaired pair hp).1 hboth.1)
+    · constructor
+      · intro pair hp hblack hpartner
+        exact False.elim ((hnoBlackPaired pair hp).1 hblack)
+      · intro pair hp hblack hpartner
+        exact False.elim ((hnoBlackPaired pair hp).2 hblack)
 
 theorem invariant_pair_ne {p : Pairing} {s : Position}
     (h : Invariant p s) {a b : Coord} (hp : (a, b) ∈ p.pairs) :
