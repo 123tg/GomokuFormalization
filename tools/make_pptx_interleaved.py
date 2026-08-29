@@ -909,8 +909,9 @@ header(s, '不足 ①：功能缺口', 'Not Done Well · Function')
 issues = [
     ('空棋盘开局求解 · 未完成',
      '没有从 7×7 空棋盘开始的必胜证书，不能宣称 initial_black_wins'),
-    ('空棋盘和棋 · 未完成',
-     '中盘 9 局面的和棋已验证；空棋盘 StandardDraw 仍是开放目标'),
+    ('空棋盘和棋 · 只差“白防黑”一环',
+     '黑防白 BlackCanPreventWhiteWin initialPosition 已证（策略偷取）；'
+     '只差 WhiteCanPreventBlackWin initialPosition，即可组合出空棋盘 StandardDraw'),
     ('缓存 · 未接入',
      'SearchMemo / EngineMemo 已定义，但还没有接入引擎默认搜索流程'),
     ('性能 · 未验证',
@@ -962,7 +963,7 @@ text(s, 0.9, 4.7, 11.5, 0.55,
      [{'runs': [('已做：规则 · 双模式搜索器 · 两种证书 · 9 个中盘和棋局面', 16, False,
                  RGBColor(0xCF, 0xD8, 0xE8))], 'align': PP_ALIGN.CENTER}])
 text(s, 0.9, 5.3, 11.5, 0.55,
-     [{'runs': [('未做：空棋盘开局求解 · 空棋盘和棋 · 大规模验证', 16, False,
+     [{'runs': [('未做：空棋盘开局求解 · 空棋盘“白防黑”（只差一环）· 大规模验证', 16, False,
                  RGBColor(0xCF, 0xD8, 0xE8))], 'align': PP_ALIGN.CENTER}])
 
 # ---------------- speaker notes ----------------
@@ -1001,7 +1002,8 @@ NOTES = [
     '这就是“搜索器只出数据，定理由 Lean 内核保证”的直接体现。',
     '验证链：构造局面、C++ 找证书、Lean 重算、组合出 StandardDraw；五项断言 9/9 通过。',
     '汇总表：九个局面的两张证书全部通过检查，每个都证明了 StandardDraw。',
-    '不足一：空棋盘开局求解和空棋盘和棋都未完成，目前只有中盘局面。',
+    '不足一：空棋盘开局求解未完成；空棋盘和棋其实只差一环——黑防白已用策略偷取'
+    '证明，还缺白防黑，补上即可组合出空棋盘 StandardDraw。',
     '不足二：参数没调优、缺基准数据、导出复检链路粗糙。',
     '总结：已做规则、双模式搜索器、两种证书与 9 个中盘和棋；未做空棋盘目标。谢谢。',
 ]
