@@ -87,6 +87,36 @@ the trusted proof layer. A `found` result is meaningful after Lean accepts the
 certificate; depth or resource exhaustion is not a proof that the position is
 unwinnable.
 
+## Lean interface correspondence
+
+The authoritative contract is `../SEARCHER_INTERFACE.md`.  The exporter keeps the
+existing program representation and maps it directly to Lean:
+
+- C++ `Coord {x, y}` becomes Lean `(x, y)`, with `x` as the column and `y` as
+  the row; both sides use the row-major index `y * 15 + x`;
+- `Certificate::target` and the three `CertificateKind` cases map directly to
+  `CompactCertificate.target` and `CertificateNode`;
+- nodes are emitted in depth-first preorder, so every edge satisfies
+  `parent < child`;
+- a prover node emits one proved move, while an opponent node emits every
+  legal reply; VCF guidance never removes opponent replies;
+- the exact bitboards, turn, target, and remaining depth participate in table
+  equality, so the Zobrist value is only a hash accelerator.
+
+`validateCertificate` performs an untrusted preflight before writing Lean.  It
+rejects bad terminal labels, wrong turns, illegal or missing moves, duplicate
+opponent replies, non-forward references, mismatched child positions, and
+invalid exporter source edges.  Lean repeats the proof-relevant checks.
+
+For an empty 15x15 board with Black to move and Black as target, generated code
+uses `checkCertificate` and `compact_certificate_sound`.  All other roots use
+`checkLocalCertificateAt` and `local_certificate_at_sound`; a local result must
+not be presented as the global opening theorem.
+
+The parameterized 5x5--8x8 draw programs in `cpp/tools/` do not emit this
+15x15 force-win certificate.  Their current results therefore remain
+reproducible computations rather than Lean-checked draw theorems.
+
 The VCF oracle accepts only attacker moves that win immediately or create at
 least one immediate winning point while leaving the defender no immediate
 win. With one winning point it recursively checks the forced block; with two

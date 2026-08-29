@@ -122,10 +122,21 @@ theorem initial_black_wins :
   的完整链路；该测试覆盖对手节点的全部两个合法应手。真实 15×15 策略证书尚未导入，
   因此 `initial_black_wins` 仍未声明。
 
+  接口同步步骤已完成：GitHub `main` 的规则审计、模式审计和 `SEARCHER_INTERFACE.md`
+  已合入本地搜索分支，同时保留已有中文注释、Lean 搜索引擎、C++ DFPN/VCF 和小棋盘
+  搜索工具。C++ 导出器现在先用 `validateCertificate` 预检胜局标签、轮次、合法着法、
+  对手全应手覆盖、严格向后引用和子局面一致性；空 15×15 初始局面的黑方证书自动连接
+  `checkCertificate`/`compact_certificate_sound`，局部局面继续连接
+  `checkLocalCertificateAt`/`local_certificate_at_sound`。该 C++ 预检只用于尽早发现接口错误，
+  不进入可信基础，最终结论仍以 Lean 检查结果为准。
+
 最近一次验证：C++17 版本已用 GCC 10.3 在 `-O3 -DNDEBUG` 下构建，
 `gomoku_tests.exe` 的几何、解析、OR/AND/VCF 证明和资源上限回归全部通过；立即胜、
 对手全应手和开放四 VCF 示例分别生成 2、5、6 节点证书。VCF 开启时该开放四回归的
 DFPN 展开节点从 13 降到 7；VCF 节点预算耗尽或关闭时，完整 DFPN 仍生成同一证明。
+本次接口同步后又重新执行了完整 `lake build`，合并后的 8723 个构建任务全部成功；
+新版 C++ 导出器生成的临时两节点局部证书也已单独通过 `lake env lean` 检查。
+新增的 C++ 负向回归确认预检会拒绝非向后子引用和遗漏对手合法应手。
 `lake build Gomoku.Generated.CppSmoke`、`lake build Gomoku.Generated.CppFork` 和
 `lake build Gomoku.Generated.CppVcf` 均通过；先顺序构建内存占用较高的模块后，
 `lake build` 全工程通过（8721 jobs）。预算、选择性分支、强制防守、缓存上限和证书回归

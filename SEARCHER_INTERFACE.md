@@ -65,7 +65,7 @@ parent < child
 5. 允许共享子树，但共享节点必须仍然满足每条边的局面匹配和编号递增。
 6. 未使用的节点目前也会被逐个检查；不要把无关的坏节点附在数组末尾。
 
-推荐采用深度优先后序布局：先为一个子树分配连续编号，再分配后面的兄弟子树。`candidateTreeCertificate` 已经提供了这种布局的参考实现。
+推荐采用深度优先先序布局：先写父节点，再为第一棵子树分配连续编号，然后写后面的兄弟子树。`candidateTreeCertificate` 和 C++ 的 `emitProof` 都使用这种布局。这里必须是“先序”，因为检查器要求 `parent < child`。
 
 ## 4. 三种节点如何编码
 
@@ -145,7 +145,9 @@ compact_certificate_sound c h
 CanForceWin initialPosition .black
 ```
 
-`checkLocalCertificateAt s c` 复用完全相同的节点、边、索引和对手覆盖检查，但允许根节点是任意指定局面。它适合测试局部战术、两层证书和小棋盘实验；局部证书不能因此被解释为空棋盘的全局证明。
+`checkLocalCertificateAt s c` 复用完全相同的节点、边、索引和对手覆盖检查，但允许根节点是任意指定局面。它适合测试局部战术和两层证书；局部证书不能因此被解释为空棋盘的全局证明。
+
+这里的 `CompactCertificate` 固定使用 15×15 的 `Position`。`Gomoku.Parametric` 和 `cpp/tools/solve_small_draws.cpp` 的 5×5--8×8 实验属于另一套参数化模型，不能把它们的和棋搜索结果直接交给本检查器。要形式化这些和棋结果，需要单独的参数化和棋证书类型及其 soundness 定理。
 
 ## 6. 坐标与棋盘表示
 
@@ -165,6 +167,14 @@ allCoords : Array Coord
 
 已有定理证明两者互为逆。建议搜索器使用 `coordIndex` 作为数组掩码和缓存键，而向证书写入实际 `Coord`。
 
+当前 C++ 搜索器中的 `Coord {x, y}` 原样导出为 Lean 的 `(x, y)`：`x` 是列，`y` 是行；输入文件按 `y = 0` 到 `14` 逐行读取。C++ bitboard 的线性索引为
+
+```text
+index = y * 15 + x
+```
+
+这与 Lean 的 `coordIndex` 行主序一致。不要交换两个坐标分量。
+
 局面键 `PositionKey` 同时保存轮到谁和完整的 225 格棋盘向量。它是无损键，不是可能碰撞的哈希值；缓存不能把两个不同局面合并。
 
 ## 7. 推荐的搜索流程
@@ -182,6 +192,19 @@ allCoords : Array Coord
 9. 在 Lean 中调用 `checkLocalCertificateAt` 或 `checkCertificate`。
 
 当前仓库中的 `searchCandidateTree`、`candidateTreeCertificate`、`checkedDepthCertificateFor` 是有限深度参考实现。它们不是完整 15x15 求解器，也不能绕过检查器。
+
+当前 `cpp/gomoku_solver` 与上述接口的对应关系如下：
+
+| C++ | Lean | 接口约束 |
+|---|---|---|
+| `Certificate::target` | `CompactCertificate.target` | 原样导出 |
+| `CertificateNode::terminal` | `CertificateNode.terminal` | 必须是目标方的实际胜局 |
+| `CertificateNode::proverMove` | `CertificateNode.proverMove` | 只保留一个已证明子节点 |
+| `CertificateNode::opponentMoves` | `CertificateNode.opponentMoves` | 必须完整且无重复地枚举所有合法应手 |
+| `sourceParent`、`sourceMove` | 不进入证书 | 只用于生成每个 Lean `Position` 定义 |
+| DFPN/VCF/置换表 | 不进入可信基础 | 只负责寻找候选树 |
+
+导出前，`validateCertificate` 会在 C++ 侧预检目标胜局、轮次、合法着法、对手全应手、向后引用和子局面重建。这是尽早发现生成错误的防线，不是数学证明；最终可信结论仍只来自 Lean 检查器。
 
 ## 8. 缓存约束
 
@@ -237,6 +260,8 @@ example : CanForceWin initialPosition .black :=
 
 `native_decide` 只适合测试模块；正式 soundness 定理仍来自 `compact_certificate_sound`。
 
+当前 C++ 导出器会自动选择检查入口：空 15×15 棋盘、黑方先手且证明目标为黑方时生成 `checkCertificate` 与 `compact_certificate_sound`；其他局部根生成 `checkLocalCertificateAt` 与 `local_certificate_at_sound`。两种路径都不会信任 C++ 自己的胜负判断。
+
 ## 10. 每次提交必须附带的信息
 
 ```text
@@ -252,5 +277,7 @@ Lean 检查结果：checkLocalCertificateAt/checkCertificate
 已经由 Lean 证明：
 尚未证明：
 ```
+
+`cpp/gomoku_solver` 的标准输出已经使用稳定字段报告上述主要信息，包括 `search_target`、各项资源上限、`status`、`certificate`、节点数、源码字节数、缓存统计以及实际选择的 `lean_checker`。`status` 为资源上限或深度上限时，必须同时报告 `certificate=none` 和 `lean_checker=not-run`。
 
 搜索器的算法性能属于实验结果；只有通过 Lean 检查的证书才属于形式化证明成果。
