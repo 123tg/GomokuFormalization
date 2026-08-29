@@ -13,6 +13,14 @@ import Gomoku.Engine
 import Gomoku.Generated.CppSmoke
 import Gomoku.Generated.PreventBlackWinMidgame
 import Gomoku.Generated.Draw7x7
+import Gomoku.Generated.Draw7x7s2
+import Gomoku.Generated.Draw7x7s3
+import Gomoku.Generated.Draw7x7s4
+import Gomoku.Generated.Draw7x7s5
+import Gomoku.Generated.Draw7x7s6
+import Gomoku.Generated.Draw7x7s7
+import Gomoku.Generated.Draw7x7s8
+import Gomoku.Generated.Draw7x7s9
 import Gomoku.RuleAudit
 import Gomoku.DefenseAudit
 

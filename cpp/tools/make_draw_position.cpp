@@ -1,14 +1,23 @@
-// make_draw_position.cpp — build a reachable 7x7 position with 21 black +
-// 21 white stones (black to move) where EVERY length-5 window contains at
-// least one black AND at least one white stone.  Such a position is a forced
-// draw: neither player can ever complete a window, so both defense searches
-// trivially succeed and `standardDraw_of_mutualDefense` applies in Lean.
+// make_draw_position.cpp — build reachable 7x7 positions with 21 black +
+// 21 white stones (black to move, 7 empty cells) where EVERY length-5
+// window contains at least one black AND at least one white stone.  Such
+// positions are forced draws: neither player can ever complete a window, so
+// both defense searches trivially succeed and `standardDraw_of_mutualDefense`
+// applies in Lean.
 //
-// Start from the full checkerboard (rows BWBWBWB; no five anywhere), then
-// greedily remove black cells while preserving the both-colors property.
+// Usage: make_draw_position [--seed N] [--count K] [--out FILE]
+//   --seed N   shuffle removal order with this seed (default 1)
+//   --count K  emit K distinct positions (seeds N..N+K-1)
+//   --out FILE write the LAST position in solver text format to FILE
+//
+// Start from the period-4 pattern (black iff (x + 2y) mod 4 in {0,1}), which
+// has max run 2 in every row/column/diagonal, then greedily remove stones
+// (4 black + 3 white) while preserving the both-colors property.
 #include <algorithm>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -56,84 +65,108 @@ bool bothColorsInEveryWindow(const std::vector<Window>& windows,
   return true;
 }
 
-}  // namespace
+struct Position {
+  std::vector<bool> black;
+  std::vector<bool> white;
+};
 
-int main() {
+Position makePosition(std::uint64_t seed) {
   const std::vector<Window> windows = allWindows();
-  std::vector<bool> black(size * size, false);
-  std::vector<bool> white(size * size, false);
-  // Pattern: black iff ((x + 2y) mod 4) in {0,1}.  Rows, columns and both
-  // diagonals then have max run 2, so every length-5 window contains both
-  // colors (verified below).
+  Position pos;
+  pos.black.assign(size * size, false);
+  pos.white.assign(size * size, false);
   for (int y = 0; y < size; ++y) {
     for (int x = 0; x < size; ++x) {
       const int c = y * size + x;
       const int v = (x + 2 * y) % 4;
-      if (v == 0 || v == 1) black[c] = true;
-      else white[c] = true;
+      if (v == 0 || v == 1) pos.black[c] = true;
+      else pos.white[c] = true;
     }
   }
-  const auto countBlack = [&](const std::vector<bool>& b) {
-    return std::count(b.begin(), b.end(), true);
-  };
-  std::cout << "initial: black=" << countBlack(black)
-            << " white=" << std::count(white.begin(), white.end(), true)
-            << " bothColors="
-            << (bothColorsInEveryWindow(windows, black, white) ? "yes" : "no")
-            << "\n";
+  std::vector<int> order(size * size);
+  for (int c = 0; c < size * size; ++c) order[c] = c;
+  std::mt19937 rng(static_cast<std::uint32_t>(seed));
+  std::shuffle(order.begin(), order.end(), rng);
 
-  // Greedily remove stones (target 21 black + 21 white, i.e. 4 black and
-  // 3 white removals) while preserving the both-colors property.
-  int targetBlack = 21;
-  int targetWhite = 21;
-  int guard = 0;
-  while (countBlack(black) > targetBlack && guard++ < 100) {
-    bool removed = false;
-    for (int c = 0; c < size * size; ++c) {
-      if (!black[c]) continue;
-      black[c] = false;
-      if (bothColorsInEveryWindow(windows, black, white)) {
-        std::cout << "removed B (" << c % size << "," << c / size << ")\n";
-        removed = true;
-        break;
-      }
-      black[c] = true;
-    }
-    if (!removed) {
-      std::cout << "stuck removing black\n";
-      break;
+  // Greedily remove black stones down to 21, preserving both-colors.
+  int removedBlack = 0;
+  for (const int c : order) {
+    if (removedBlack == 4) break;
+    if (!pos.black[c]) continue;
+    pos.black[c] = false;
+    if (bothColorsInEveryWindow(windows, pos.black, pos.white)) {
+      ++removedBlack;
+    } else {
+      pos.black[c] = true;
     }
   }
-  guard = 0;
-  while (std::count(white.begin(), white.end(), true) > targetWhite &&
-         guard++ < 100) {
-    bool removed = false;
-    for (int c = 0; c < size * size; ++c) {
-      if (!white[c]) continue;
-      white[c] = false;
-      if (bothColorsInEveryWindow(windows, black, white)) {
-        std::cout << "removed W (" << c % size << "," << c / size << ")\n";
-        removed = true;
-        break;
-      }
-      white[c] = true;
-    }
-    if (!removed) {
-      std::cout << "stuck removing white\n";
-      break;
+  // Greedily remove white stones down to 21, preserving both-colors.
+  int removedWhite = 0;
+  for (const int c : order) {
+    if (removedWhite == 3) break;
+    if (!pos.white[c]) continue;
+    pos.white[c] = false;
+    if (bothColorsInEveryWindow(windows, pos.black, pos.white)) {
+      ++removedWhite;
+    } else {
+      pos.white[c] = true;
     }
   }
-  std::cout << "final: black=" << countBlack(black)
-            << " white=" << std::count(white.begin(), white.end(), true)
-            << " bothColors="
-            << (bothColorsInEveryWindow(windows, black, white) ? "yes" : "no")
-            << "\n";
+  if (removedBlack != 4 || removedWhite != 3 ||
+      !bothColorsInEveryWindow(windows, pos.black, pos.white)) {
+    std::cerr << "seed " << seed << ": failed to build position (b="
+              << removedBlack << " w=" << removedWhite << ")\n";
+    return {};
+  }
+  return pos;
+}
+
+void printBoard(std::ostream& out, const Position& pos) {
   for (int y = 0; y < size; ++y) {
     for (int x = 0; x < size; ++x) {
       const int c = y * size + x;
-      std::cout << (black[c] ? 'B' : (white[c] ? 'W' : '.'));
+      out << (pos.black[c] ? 'B' : (pos.white[c] ? 'W' : '.'));
     }
-    std::cout << "\n";
+    out << "\n";
+  }
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  std::uint64_t seed = 1;
+  int count = 1;
+  std::string outPath;
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--seed" && i + 1 < argc) {
+      seed = std::stoull(argv[++i]);
+    } else if (arg == "--count" && i + 1 < argc) {
+      count = std::stoi(argv[++i]);
+    } else if (arg == "--out" && i + 1 < argc) {
+      outPath = argv[++i];
+    } else {
+      std::cerr << "usage: make_draw_position [--seed N] [--count K] [--out FILE]\n";
+      return 1;
+    }
+  }
+  Position last;
+  for (int k = 0; k < count; ++k) {
+    last = makePosition(seed + static_cast<std::uint64_t>(k));
+    if (last.black.empty()) return 1;
+    std::cout << "=== seed " << (seed + k) << " ===" << "\n";
+    printBoard(std::cout, last);
+  }
+  if (!outPath.empty()) {
+    std::ofstream out(outPath);
+    if (!out) {
+      std::cerr << "cannot write " << outPath << "\n";
+      return 1;
+    }
+    out << "turn black\n";
+    out << "target black\n";
+    printBoard(out, last);
+    std::cout << "wrote " << outPath << "\n";
   }
   return 0;
 }

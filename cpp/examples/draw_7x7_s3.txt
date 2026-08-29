@@ -1,0 +1,9 @@
+turn black
+target black
+BBWWB.W
+WWBBW.B
+.BWWBBW
+WWBBWWB
+BBW.BBW
+.WBBWW.
+BBWW.BW
