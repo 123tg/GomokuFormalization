@@ -148,12 +148,12 @@ theorem mem_openFourExtensionCells_iff
       b.cell m = .empty ∧ straightOpenFour (b.place m p) p c d := by
   simp [OpenFourExtensionCells]
 
-theorem straightOpenFour_has_winningCell
+theorem straightOpenFour_right_has_winningCell
     {b : Board} {p : Player} {c : Coord} {d : Direction}
     (h : straightOpenFour b p c d) :
-    ∃ m, m ∈ WinningCells ⟨b, p⟩ p := by
+    ∃ m, step c d 4 = some m ∧ m ∈ WinningCells ⟨b, p⟩ p := by
   rcases h.2.2 with ⟨m, hmstep, hmempty⟩
-  refine ⟨m, (mem_winningCells_iff ⟨b, p⟩ p m).2 ⟨hmempty, ?_⟩⟩
+  refine ⟨m, hmstep, (mem_winningCells_iff ⟨b, p⟩ p m).2 ⟨hmempty, ?_⟩⟩
   refine ⟨c, d, ?_⟩
   intro n
   fin_cases n
@@ -198,6 +198,108 @@ theorem straightOpenFour_has_winningCell
       (b.place m p).cell q = b.cell q := Board.place_other b hqm p
       _ = .stone p := hqcell
   · exact ⟨m, by simpa using hmstep, Board.place_same _ _ _⟩
+
+theorem straightOpenFour_has_winningCell
+    {b : Board} {p : Player} {c : Coord} {d : Direction}
+    (h : straightOpenFour b p c d) :
+    ∃ m, m ∈ WinningCells ⟨b, p⟩ p := by
+  rcases straightOpenFour_right_has_winningCell h with ⟨m, _hmstep, hm⟩
+  exact ⟨m, hm⟩
+
+/- The other endpoint of a straight open four is a winning cell as well.  The
+   endpoint-shift lemma lets us reuse the original four-run after re-rooting
+   it at the left endpoint. -/
+theorem straightOpenFour_left_has_winningCell
+    {b : Board} {p : Player} {c : Coord} {d : Direction}
+    (h : straightOpenFour b p c d) :
+    ∃ m, step c d (-1) = some m ∧ m ∈ WinningCells ⟨b, p⟩ p := by
+  rcases h.2.1 with ⟨m, hmstep, hmempty⟩
+  refine ⟨m, hmstep, (mem_winningCells_iff ⟨b, p⟩ p m).2 ⟨hmempty, ?_⟩⟩
+  refine ⟨m, d, ?_⟩
+  intro n
+  fin_cases n
+  · exact ⟨m, step_zero m d, Board.place_same _ _ _⟩
+  · rcases h.1 ⟨0, by omega⟩ with ⟨q, hqstep, hqcell⟩
+    have hshift := step_left_endpoint_shift hmstep ⟨1, by omega⟩
+    have hqshift : step m d 1 = some q := by
+      simpa using hshift.trans hqstep
+    have hqm : q ≠ m := by
+      intro hqm
+      subst q
+      rw [hmempty] at hqcell
+      cases hqcell
+    refine ⟨q, hqshift, ?_⟩
+    calc
+      (b.place m p).cell q = b.cell q := Board.place_other b hqm p
+      _ = .stone p := hqcell
+  · rcases h.1 ⟨1, by omega⟩ with ⟨q, hqstep, hqcell⟩
+    have hshift := step_left_endpoint_shift hmstep ⟨2, by omega⟩
+    have hqshift : step m d 2 = some q := by
+      simpa using hshift.trans hqstep
+    have hqm : q ≠ m := by
+      intro hqm
+      subst q
+      rw [hmempty] at hqcell
+      cases hqcell
+    refine ⟨q, hqshift, ?_⟩
+    calc
+      (b.place m p).cell q = b.cell q := Board.place_other b hqm p
+      _ = .stone p := hqcell
+  · rcases h.1 ⟨2, by omega⟩ with ⟨q, hqstep, hqcell⟩
+    have hshift := step_left_endpoint_shift hmstep ⟨3, by omega⟩
+    have hqshift : step m d 3 = some q := by
+      simpa using hshift.trans hqstep
+    have hqm : q ≠ m := by
+      intro hqm
+      subst q
+      rw [hmempty] at hqcell
+      cases hqcell
+    refine ⟨q, hqshift, ?_⟩
+    calc
+      (b.place m p).cell q = b.cell q := Board.place_other b hqm p
+      _ = .stone p := hqcell
+  · rcases h.1 ⟨3, by omega⟩ with ⟨q, hqstep, hqcell⟩
+    have hshift := step_left_endpoint_shift hmstep ⟨4, by omega⟩
+    have hqshift : step m d 4 = some q := by
+      simpa using hshift.trans hqstep
+    have hqm : q ≠ m := by
+      intro hqm
+      subst q
+      rw [hmempty] at hqcell
+      cases hqcell
+    refine ⟨q, hqshift, ?_⟩
+    calc
+      (b.place m p).cell q = b.cell q := Board.place_other b hqm p
+      _ = .stone p := hqcell
+
+/- Both endpoints of a straight open four are distinct immediate winning
+   cells.  This is the geometric fact needed before any double-threat claim;
+   it does not by itself assert that the current player is to move. -/
+theorem straightOpenFour_has_two_distinct_winningCells
+    {b : Board} {p : Player} {c : Coord} {d : Direction}
+    (h : straightOpenFour b p c d) :
+    ∃ left right,
+      left ∈ WinningCells ⟨b, p⟩ p ∧
+      right ∈ WinningCells ⟨b, p⟩ p ∧
+      left ≠ right := by
+  rcases straightOpenFour_left_has_winningCell h with
+    ⟨left, hleftStep, hleftWin⟩
+  rcases straightOpenFour_right_has_winningCell h with
+    ⟨right, hrightStep, hrightWin⟩
+  refine ⟨left, right, hleftWin, hrightWin, ?_⟩
+  intro heq
+  subst right
+  exact (step_neg_one_ne_four hleftStep hrightStep).elim
+
+theorem straightOpenFour_hasDoubleThreat
+    {b : Board} {p : Player} {c : Coord} {d : Direction}
+    (h : straightOpenFour b p c d) :
+    HasDoubleThreat ⟨b, p⟩ p := by
+  rw [HasDoubleThreat]
+  refine (card_ge_two_iff_exists_distinct (WinningCells ⟨b, p⟩ p)).2 ?_
+  rcases straightOpenFour_has_two_distinct_winningCells h with
+    ⟨left, right, hleft, hright, hne⟩
+  exact ⟨left, hleft, right, hright, hne⟩
 
 theorem openFourExtension_has_winningCell
     {b : Board} {p : Player} {c : Coord} {d : Direction} {m : Coord}
@@ -766,6 +868,49 @@ theorem straightOpenFour_black_immediate
   change Position.terminal (play s m) = some .blackWin
   simp [Position.terminal, hrun]
 
+/- The same local fact is independent of color.  A straight open four has an
+   empty endpoint whose placement creates a five-run for its owner.  Since the
+   parent is non-terminal, the opponent had no five-run before the move, and
+   placing the owner's stone cannot create one for the opponent. -/
+theorem straightOpenFour_immediate
+    {s : Position} {p : Player} {c : Coord} {d : Direction}
+    (hturn : s.turn = p) (hnoterm : ¬ IsTerminal s)
+    (hpattern : straightOpenFour s.board p c d) :
+    ∃ m, legalMove s m ∧ terminal (play s m) = some (winner p) := by
+  rcases straightOpenFour_has_winningCell
+      (b := s.board) (p := p) (c := c) (d := d) hpattern with ⟨m, hm⟩
+  have hmdata := (mem_winningCells_iff ⟨s.board, p⟩ p m).mp hm
+  have hlegal : legalMove s m := ⟨hnoterm, hmdata.1⟩
+  have hrun : hasAtLeastFive (play s m).board p := by
+    change hasAtLeastFive (s.board.place m s.turn) p
+    rw [hturn]
+    exact hmdata.2
+  have hnoopp : ¬ hasAtLeastFive (play s m).board (Player.other p) := by
+    intro hopp
+    have hprev : hasAtLeastFive s.board (Player.other p) := by
+      apply hasAtLeastFive_of_place_other
+        (p := Player.other p) (q := p) (r := m) (Player.self_ne_other p)
+      change hasAtLeastFive (s.board.place m s.turn) (Player.other p) at hopp
+      rw [hturn] at hopp
+      exact hopp
+    cases p with
+    | black =>
+        have hprev' : hasAtLeastFive s.board .white := by simpa using hprev
+        exact hnoterm (Or.inr (Or.inl hprev'))
+    | white =>
+        have hprev' : hasAtLeastFive s.board .black := by simpa using hprev
+        exact hnoterm (Or.inl hprev')
+  refine ⟨m, hlegal, ?_⟩
+  cases p with
+  | black =>
+      have hwhite : ¬ hasAtLeastFive (play s m).board .white := by
+        simpa using hnoopp
+      simp [terminal, Position.terminal, winner, hrun, hwhite]
+  | white =>
+      have hblack : ¬ hasAtLeastFive (play s m).board .black := by
+        simpa using hnoopp
+      simp [terminal, Position.terminal, winner, hrun, hblack]
+
 set_option maxRecDepth 100000 in
 theorem singleOpenFourPosition_forces_win
     {s : Position} (hturn : s.turn = .black) (hnoterm : ¬ IsTerminal s)
@@ -796,6 +941,34 @@ theorem singleOpenFour_forces_win {s : Position}
   CanForceWin s .black := by
   have _ := hnoWhite
   exact singleOpenFour_forces_win_minimal hturn hnoterm hpattern
+
+/- The opponent-immediate-win premise above is intentionally retained for
+   callers that want to state a generic safety condition, but it is not needed
+   for a genuine single open four: the black move wins immediately. -/
+theorem singleOpenFour_forces_win_unconditional {s : Position}
+    (hturn : s.turn = .black) (hnoterm : ¬ IsTerminal s)
+    (hpattern : SingleOpenFour s .black) :
+    CanForceWin s .black :=
+  singleOpenFour_forces_win_minimal hturn hnoterm hpattern
+
+/- Color-generic form for callers that model White's local tactics as well.
+   The existing Black-specialized theorem remains available for compatibility
+   with the original project statements. -/
+set_option maxRecDepth 100000 in
+theorem singleOpenFour_forces_win_any_player {s : Position} {p : Player}
+    (hturn : s.turn = p) (hnoterm : ¬ IsTerminal s)
+    (hpattern : SingleOpenFour s p) :
+    CanForceWin s p := by
+  change (openFourWitnesses s.board p).card = 1 at hpattern
+  have hcard : 0 < (openFourWitnesses s.board p).card := by
+    omega
+  rcases Finset.card_pos.mp hcard with ⟨w, hw⟩
+  rcases w with ⟨c, d⟩
+  have hstraight : straightOpenFour s.board p c d :=
+    (mem_openFourWitnesses s.board p c d).mp hw
+  rcases straightOpenFour_immediate hturn hnoterm hstraight with
+    ⟨m, hm, hwin⟩
+  exact canForceWin_immediate hm hwin hturn
 
 theorem opponent_no_immediate_win_of_not
     {s : Position} {p : Player} (h : ¬ OpponentHasImmediateWin s p) :

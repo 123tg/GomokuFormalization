@@ -42,7 +42,11 @@ theorem initial_black_wins :
   `brokenOpenThree_has_fourExtension`，证明两个冻结断三模式填补内部缺口后至少
   形成一个四连扩展点；新增 `OpenFourExtensionCells`、
   `straightOpenFour_has_winningCell` 和 `openFourExtension_has_winningCell`，把
-  方向性开放四扩展连接到至少一个立即成五点；新增 `BrokenOpenThreeMove`、
+  方向性开放四扩展连接到至少一个立即成五点。新增
+  `straightOpenFour_left_has_winningCell`、`straightOpenFour_right_has_winningCell` 和
+  `straightOpenFour_has_two_distinct_winningCells` 现在进一步证明直线型活四的两个
+  端点都是不同的立即胜点；这仍是局部几何结论，不是全局先手必胜定理。
+  另有 `BrokenOpenThreeMove`、
   `SafeBrokenOpenThree` 和 `safeBrokenOpenThree_forces_win`，将断三包装接入
   `ForceWin`；新增 `ImmediateSafeBrokenOpenThree` 及其到安全谓词和
   `CanForceWin` 的推论，但安全谓词仍要求显式提供所有防守后的 `CanForceWin`。
@@ -76,11 +80,12 @@ theorem initial_black_wins :
   横、竖、两种斜线、边界窗口和不足五子的反例。
   同一阶段还定义了无碰撞的 `PositionKey`（轮次加 225 格 `Vector Cell`）、
   `boardKey_eq_iff`/`positionKey_eq_iff` 和 `containsPositionKey`；它们先作为置换表
-  的精确键接口验证，尚未把缓存剪枝接入深搜。
+   的精确键接口验证；缓存现在已经作为状态传入和返回有限深度递归搜索，但仍是正确性
+   导向的参考实现，不是高性能完整求解器。
   本轮又增加了 `SearchMemo`/`SearchKey` 适配层：键同时记录剩余深度、目标方和完整局面，
   并给出缓存命中/未命中等价性引理以及 `checkedDepthCertificateForCached`。缓存得到的
-  候选树仍会重新经过局部证书检查，因此缓存不是可信证明来源；真正让递归搜索携带、更新
-  并利用置换表仍是下一阶段工作。
+   候选树仍会重新经过局部证书检查，因此缓存不是可信证明来源；更强的性能等价性、增量
+   威胁维护和大局面评测仍是下一阶段工作。
   `checkLocalCertificate` 不改变全局根约束，而是允许任意局面作为局部证书根；
   `twoPlyImmediateCertificate` 可从有限的“对手应手 -> 我方立即胜着”表生成完整
   `opponentMoves` 证书，`immediateResponseTable` 则枚举所有合法对手应手并尝试自动
@@ -94,7 +99,30 @@ theorem initial_black_wins :
   `Gomoku/Adversarial.lean` 还用一个固定的五节点双威胁候选树回归测试了
   `CandidateTree -> CompactCertificate -> checkLocalCertificateAt -> CanForceWin`
   的完整链路；该测试覆盖对手节点的全部两个合法应手。真实 15×15 策略证书尚未导入，
-  因此 `initial_black_wins` 仍未声明。
+   因此 `initial_black_wins` 仍未声明。
+
+- 阶段 10（搜索审查与外部互操作）已完成当前批次：`Gomoku.Engine` 提供带节点预算、
+  迭代加深、威胁排序、目标节点选择性剪枝和精确局面缓存的 Lean 端候选搜索器；
+  `Gomoku.SearchAudit`、`Gomoku.EngineAudit` 和 `Gomoku.MutationAudit` 提供正常局面、
+  对手立即胜、预算截止、遗漏应手以及故意错误规则的回归。`Gomoku.InteropAudit` 固定
+  外部棋子数组到 Lean 局面的适配，并纳入 5 个 C++ 生成的局部证书样例，其中一个真实
+  可达的一步胜样例和一个真实可达、覆盖 208 个白棋应手的双威胁样例均由 Lean 检查通过。
+  这仍不是空棋盘开始的全局求解；当前完整构建为 8732 个目标。引擎缓存键
+  `EngineSearchKey` 还包含完整 `EngineConfig`，跨配置的失败缓存不会抑制另一种搜索策略；
+  `Gomoku.EngineAudit` 对此有专门回归。`engineCacheLookup` 又把缓存查询明确分成
+  `miss`、`notFound` 和 `found tree` 三种状态，避免把“尚未查询”和“本次搜索未找到”混为一谈；
+  三种状态都仍处于不可信搜索层，`found` 必须经过证书检查器。
+
+- 阶段 11（有限深度语义基准）已完成：`Gomoku.Bounded` 将“最多再走多少步”写成独立的
+  可执行定义，并证明通过该计算只能得到真实的 `CanForceWin`；`boundedCanForceWin_mono`
+  和 `boundedCanForceWin_mono_of_le` 证明增加搜索深度不会撤销已发现的胜势；反方向用每次合法落子严格
+  减少一个空点，证明真实强制胜局面在 `Board.emptyCount + 1` 深度内一定被识别。
+  `Gomoku.BoundedAudit` 固定了深度不足不是必败证明这一边界，并把两空点局面的有限语义
+  与候选树搜索的 `accepted` 状态进行对照，同时覆盖和棋及对手立即胜反例。该模块为后续
+  C++/Lean 搜索器比较提供了明确的数学基准，但仍不会让 15×15 空棋盘搜索变得可行。
+  另外，`checkedDepthCertificateFor_bounded` 和缓存版本的同名桥接定理说明：任何已经通过
+  Lean 检查的候选证书，在不小于当前空位数加一的理论深度上，也会被独立有限语义识别为成功；
+  任意较浅深度的候选搜索与有限语义的完备等价仍未证明。
 
 最近一次验证：`lake build` 全工程通过，随后单独编译 `Gomoku/Adversarial.lean`
 也通过。构建输出中的 linter 警告（文件头注释、
@@ -197,6 +225,14 @@ Fin 15 只允许 0 到 14，因此坐标不会越界。
 | Gomoku/Certificate.lean | 依赖类型策略树和紧凑证书检查器 |
 | Gomoku/Examples.lean | 构造局面、正反例和 API 测试 |
 | Gomoku/Adversarial.lean | 对抗性反例、语义审计和证书拒绝测试 |
+| Gomoku/Bounded.lean | 显式剩余深度的可执行博弈语义及其 soundness/completeness 桥接 |
+| Gomoku/BoundedAudit.lean | 有限深度不足与空位数充分深度的回归 |
+| Gomoku/Engine.lean | 带预算的 Lean 端有限候选搜索器 |
+| Gomoku/SearchAudit.lean | 有限深度搜索与检查器的回归 |
+| Gomoku/EngineAudit.lean | 引擎正反例和对手分支覆盖回归 |
+| Gomoku/InteropAudit.lean | 外部搜索器数组、证书和可达性适配审计 |
+| Gomoku/MutationAudit.lean | 故意错误规则的反例回归 |
+| Gomoku/Generated/ | C++ 搜索器生成、由 Lean 重新检查的局部证书 |
 | Gomoku.lean | 统一导入所有模块 |
 
 配置文件：
@@ -474,7 +510,8 @@ def ImmediateSafeDoubleOpenThree (s : Position) (p : Player) (m : Coord) : Prop 
 
 ### 9.3 已完成的核心局部定理
 
-straightOpenFour_black_immediate 已完成。其内容是：
+`straightOpenFour_black_immediate` 已完成；本轮又增加了颜色无关的
+`straightOpenFour_immediate`。它们的内容是：
 
 - 当前轮到黑棋。
 - 当前局面不是终局。
@@ -482,6 +519,9 @@ straightOpenFour_black_immediate 已完成。其内容是：
 - 取该活四一端的空点落子。
 - 原四颗黑子加新落子构成连续五子。
 - 该着法合法，且落子后 terminal 等于 blackWin。
+
+颜色无关版本把最后两条推广为：原四颗目标方棋子加新落子构成连续五子，且落子后
+`terminal` 等于该目标方的胜利结果。因此同一局部事实也可以用于白棋。
 
 singleOpenFour_forces_win 已提供严格接口：
 
@@ -496,7 +536,8 @@ theorem singleOpenFour_forces_win
 
 审计后增加了 `singleOpenFour_forces_win_minimal`。它去掉了数学上不必要的
 `¬ HasImmediateWin s .white` 前提；原 `singleOpenFour_forces_win` 保留该前提作为
-面向战术分类的安全包装接口。两者目前都只覆盖直线型活四。
+面向战术分类的安全包装接口。`singleOpenFour_forces_win_any_player` 提供了
+`SingleOpenFour s p` 的颜色无关强制胜版本；这些定理目前都只覆盖直线型活四。
 
 当前 v1 的图形含义只覆盖直线型活四；断三和跳四必须以后独立添加。
 
@@ -625,6 +666,7 @@ checkCertificate c = true
 - [x] CompactCertificate 和结构性检查器。
 - [x] 第一批对抗性反例、证书拒绝测试和战术合法性包装。
 - [x] 两节点正向证书、`compact_reify_at` 重建回归测试，以及立即胜着证书生成器原型。
+- [x] 显式有限深度博弈语义、soundness 定理和空位数充分深度 completeness 定理。
 - [x] 横向、斜线、边界、六连、终局和非法着法测试。
 - [x] lake build 全工程构建成功。
 
@@ -818,6 +860,20 @@ theorem checkedDepthCertificateFor_sound ... : CanForceWin s target
 每个成功结果仍要通过 `checkLocalCertificateAt`，因此搜索树的递归实现和启发式
 可以以后替换，而不改变可信证明层。
 
+为了给有限搜索一个独立的数学基准，`Gomoku.Bounded` 还定义了
+`boundedCanForceWin fuel s target`。它直接按剩余深度计算：目标方节点取一个成功子着法，
+对手节点要求所有合法应手都成功，终局只接受目标方胜利。项目已经证明：
+
+```lean
+boundedCanForceWin fuel s target = true → CanForceWin s target
+```
+
+并且反方向也成立，只要深度取 `Board.emptyCount s.board + 1`。原因是每次合法落子严格
+减少一个空点，所以任何真实的有限强制胜策略都不会超过这个上界。这个语义和候选树搜索
+分开实现，专门用于审查“深度不足不等于必败”；`Gomoku.BoundedAudit` 用两空点局面验证
+深度 0 失败而深度 2 成功；同一位置的候选树证书也通过了检查器。该结果为搜索器提供了完备性参照，但不意味着可以在普通资源
+下枚举完整 15×15 棋局。
+
 当前回归覆盖两个层次：固定五节点对手分支树验证编译器和检查器，两个空点局面的
 深度 2 搜索验证递归搜索的最小闭环。`tacticalCandidateMovesFast` 已把对手立即胜点
 预先扫描为固定长度掩码，并由成员等价性定理保证不改变候选集合；掩码构造目前仍会
@@ -925,7 +981,7 @@ lake env lean Gomoku/Examples.lean
   `compact_certificate_sound` 给出可信的全局 soundness。
 - v1 活三/活四只覆盖冻结的直线型模式。
 
-项目已经完成规则、几何、博弈、证书和对抗性审计的核心工作；当前处于阶段 9，正在
+项目已经完成规则、几何、博弈、证书和当前批次的对抗性审计；当前处于阶段 10，正在
 扩展可验证的搜索器并优化候选生成。完整路线是：
 
 ~~~text
@@ -933,10 +989,12 @@ lake env lean Gomoku/Examples.lean
   -> 局部战术和反例审计（核心已完成，模式继续扩展）
   -> 小型证书 soundness（已完成）
   -> 紧凑证书可信转换（已完成）
-  -> 外部搜索器生成更深证书（当前）
+  -> 外部搜索器生成和校验局部证书（当前已完成若干样例）
   -> 外部搜索器生成 15×15 证书
   -> Lean 检查证书
   -> 证明 initial_black_wins
 ~~~
 
 每一个中间阶段都可以独立验收；任何尚未获得的结论都不会被提前写成定理。
+
+证书检查耗时，不能把这组定理当作已经完成的性能优化。
