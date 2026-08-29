@@ -413,6 +413,47 @@ int sweep(int size) {
   return 0;
 }
 
+// Depth-4 feasibility: black (mx,my), white (rx,ry), then for every black
+// second move m2 find a white response r2 such that the 4-stone position
+// admits a covering pairing.  Reports per-m2 success.
+int testDepth4(int size, int mx, int my, int rx, int ry) {
+  const int m = my * size + mx;
+  const int r = ry * size + rx;
+  const Bits base = (Bits{1} << m) | (Bits{1} << r);
+  int successes = 0;
+  int failures = 0;
+  for (int m2 = 0; m2 < size * size; ++m2) {
+    if ((base & (Bits{1} << m2)) != 0) {
+      continue;
+    }
+    bool solved = false;
+    for (int r2 = 0; r2 < size * size; ++r2) {
+      const Bits r2mask = Bits{1} << r2;
+      if ((base & r2mask) != 0 || r2 == m2) {
+        continue;
+      }
+      PairingSolver solver(size, (Bits{1} << m) | (Bits{1} << m2),
+                           (Bits{1} << r) | r2mask);
+      if (solver.solve()) {
+        const Coord a{m2 % size, m2 / size};
+        const Coord b{r2 % size, r2 / size};
+        std::cout << "m2=" << a.x << " " << a.y << " r2=" << b.x << " "
+                  << b.y << " pairs=" << solver.solution().size() << "\n";
+        solved = true;
+        ++successes;
+        break;
+      }
+    }
+    if (!solved) {
+      const Coord a{m2 % size, m2 / size};
+      std::cout << "m2=" << a.x << " " << a.y << " FAILED\n";
+      ++failures;
+    }
+  }
+  std::cout << "successes=" << successes << " failures=" << failures << "\n";
+  return failures > 0 ? 1 : 0;
+}
+
 // Single-first-move test mode: for black first move (mx, my), try every
 // white response and report which ones admit a covering pairing (depth-2
 // layered pairing feasibility).
@@ -449,8 +490,11 @@ int main(int argc, char** argv) {
   int size = 7;
   bool sweepMode = false;
   bool testMode = false;
+  bool depth4Mode = false;
   int mx = 3;
   int my = 3;
+  int rx = 3;
+  int ry = 3;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--sweep") {
@@ -461,6 +505,14 @@ int main(int argc, char** argv) {
         mx = std::stoi(argv[++i]);
         my = std::stoi(argv[++i]);
       }
+    } else if (arg == "--depth4") {
+      depth4Mode = true;
+      if (i + 4 < argc) {
+        mx = std::stoi(argv[++i]);
+        my = std::stoi(argv[++i]);
+        rx = std::stoi(argv[++i]);
+        ry = std::stoi(argv[++i]);
+      }
     } else {
       size = std::stoi(arg);
     }
@@ -470,6 +522,9 @@ int main(int argc, char** argv) {
   }
   if (testMode) {
     return testFirstMove(size, mx, my);
+  }
+  if (depth4Mode) {
+    return testDepth4(size, mx, my, rx, ry);
   }
   PairingSolver solver(size);
   if (!solver.solve()) {
