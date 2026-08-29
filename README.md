@@ -3,6 +3,9 @@
 完整的项目方案、已完成成果、当前限制和下一步实施路线见
 [`PROJECT_GUIDE.md`](PROJECT_GUIDE.md)。下面保留模块和构建命令的简短概览。
 
+搜索器与 Lean 检查器的输入输出、证书节点格式、协作约定和阶段性验收见
+[`SEARCHER_INTERFACE.md`](SEARCHER_INTERFACE.md)。
+
 This Lean 4 project formalizes a 15x15, unrestricted Gomoku game.
 
 Current modules:
@@ -33,6 +36,8 @@ Current modules:
 - `Gomoku.Examples`: API-level sanity checks, horizontal/diagonal/boundary/overline examples,
   and executable board tests.
 - `Gomoku.Adversarial`: executable counterexamples and regression checks from the semantic audit.
+- `Gomoku.RuleAudit`: rule, terminal-state, reachability, and malformed-certificate regressions.
+- `Gomoku.PatternAudit`: frozen v1 open-three/open-four patterns with four-direction and near-miss regressions.
 
 The rule layer uses the standard unrestricted semantics: a contiguous line of at least five stones wins immediately, including six or more in a row; a full board without a winner is a draw. Forbidden-move rules are intentionally outside this version.
 

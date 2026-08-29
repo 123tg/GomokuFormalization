@@ -12,6 +12,8 @@ import Gomoku.Generated.CppFork
 import Gomoku.Generated.CppVcf
 import Gomoku.Examples
 import Gomoku.Adversarial
+import Gomoku.RuleAudit
+import Gomoku.PatternAudit
 
 /-!
 `Gomoku` 是项目的总入口，按依赖顺序汇集基础棋盘、几何、规则、博弈语义、战术、

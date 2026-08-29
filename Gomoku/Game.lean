@@ -46,6 +46,59 @@ theorem canForceWin_terminal {s : Position} {target : Player}
   ForceWin.terminal h
 -- 把已经由目标玩家获胜的终局直接提升为 CanForceWin。
 
+/- At a position which is already terminal, `ForceWin` has exactly one
+   possible constructor: the recorded outcome must be the target player's
+   win.  In particular, neither a draw nor an opponent win can be skipped by
+   continuing the game tree. -/
+theorem canForceWin_terminal_iff {s : Position} {target : Player} {out : Outcome}
+    (hterm : terminal s = some out) :
+    CanForceWin s target ↔ out = winner target := by
+  constructor
+  · intro hwin
+    cases hwin with
+    | terminal hwin =>
+        rw [hterm] at hwin
+        exact Option.some.inj hwin
+    | choose hnone _ _ _ _ =>
+        rw [hterm] at hnone
+        simp at hnone
+    | respond hnone _ _ =>
+        rw [hterm] at hnone
+        simp at hnone
+  · intro hout
+    subst out
+    exact canForceWin_terminal hterm
+
+theorem not_canForceWin_of_terminal_ne
+    {s : Position} {target : Player} {out : Outcome}
+    (hterm : terminal s = some out) (hne : out ≠ winner target) :
+    ¬ CanForceWin s target := by
+  intro hwin
+  exact hne ((canForceWin_terminal_iff hterm).mp hwin)
+
+/- If it is the opponent's turn and one of their legal moves ends the game in
+   their favour, the target cannot have a forcing win.  This is the game-level
+   form of the usual "must answer an immediate threat" rule and is useful for
+   auditing tactical premises. -/
+theorem not_canForceWin_of_opponent_immediate
+    {s : Position} {target : Player} {m : Coord}
+    (hterm : terminal s = none)
+    (hturn : s.turn = Player.other target)
+    (hm : legalMove s m)
+    (hwin : terminal (play s m) = some (winner (Player.other target))) :
+    ¬ CanForceWin s target := by
+  intro hforce
+  cases hforce with
+  | terminal htarget =>
+      rw [hterm] at htarget
+      simp at htarget
+  | choose _ htargetTurn _ _ _ =>
+      exact (Player.self_ne_other target (htargetTurn.symm.trans hturn)).elim
+  | respond _ _ children =>
+      have hchild : CanForceWin (play s m) target := children m hm
+      exact not_canForceWin_of_terminal_ne hwin (by
+        cases target <;> decide) hchild
+
 theorem canForceWin_immediate {s : Position} {target : Player} {m : Coord}
     (hm : legalMove s m)
     (hwin : terminal (play s m) = some (winner target))
@@ -69,6 +122,41 @@ theorem canForceWin_move_exists {s : Position} {target : Player}
   | respond _ hturn' _ =>
       exact (Player.self_ne_other target (hturn.symm.trans hturn')).elim
 -- 从己方回合的 CanForceWin 证明中提取一个保持强制获胜的合法着法。
+
+/- At a non-terminal target-player node, the inductive game semantics is
+   exactly existential: one legal child which remains winning is enough. -/
+theorem canForceWin_target_iff
+    {s : Position} {target : Player}
+    (hterm : terminal s = none) (hturn : s.turn = target) :
+    CanForceWin s target ↔
+      ∃ m, legalMove s m ∧ CanForceWin (play s m) target := by
+  constructor
+  · intro hwin
+    exact canForceWin_move_exists hwin hterm hturn
+  · rintro ⟨m, hm, hchild⟩
+    exact ForceWin.choose hterm hturn m hm hchild
+
+/- At a non-terminal opponent node, the semantics is universal: omitting
+   even one legal reply is insufficient for a forcing-win proof. -/
+theorem canForceWin_opponent_iff
+    {s : Position} {target : Player}
+    (hterm : terminal s = none)
+    (hturn : s.turn = Player.other target) :
+    CanForceWin s target ↔
+      ∀ m, legalMove s m → CanForceWin (play s m) target := by
+  constructor
+  · intro hwin
+    cases hwin with
+    | terminal htarget =>
+        rw [hterm] at htarget
+        simp at htarget
+    | choose _ htargetTurn _ _ _ =>
+        exact (Player.self_ne_other target
+          (htargetTurn.symm.trans hturn)).elim
+    | respond _ _ children =>
+        exact children
+  · intro children
+    exact ForceWin.respond hterm hturn children
 
 /- This strategy chooses a force-preserving move whenever the current
    position is winning for `target`; outside the winning region it falls back
