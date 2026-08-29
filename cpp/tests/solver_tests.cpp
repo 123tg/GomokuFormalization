@@ -14,23 +14,48 @@ void require(bool condition, const std::string& message) {
 }
 
 void testGeometry() {
+  require(gomoku::boardSize == 7, "solver board must be 7x7");
+  require(gomoku::boardCells == 49, "7x7 board must contain 49 cells");
+
+  const gomoku::Position initial;
+  require(initial.turn == gomoku::Player::black,
+          "Black must move first");
+  require(initial.board.emptyMoves().size() == 49,
+          "initial board must expose 49 legal cells");
+  require(!initial.board.terminal().has_value(),
+          "initial board must be non-terminal");
+
   gomoku::Board horizontal;
-  for (int x = 5; x <= 8; ++x) {
-    horizontal.place({x, 7}, gomoku::Player::black);
+  for (int x = 1; x <= 4; ++x) {
+    horizontal.place({x, 3}, gomoku::Player::black);
   }
-  require(horizontal.createsFive({4, 7}, gomoku::Player::black),
+  require(horizontal.createsFive({0, 3}, gomoku::Player::black),
           "left horizontal endpoint should win");
-  require(horizontal.createsFive({9, 7}, gomoku::Player::black),
+  require(horizontal.createsFive({5, 3}, gomoku::Player::black),
           "right horizontal endpoint should win");
-  require(!horizontal.createsFive({7, 6}, gomoku::Player::black),
+  require(!horizontal.createsFive({3, 2}, gomoku::Player::black),
           "unrelated move should not win");
 
-  gomoku::Board diagonal;
-  for (int value = 0; value < 4; ++value) {
-    diagonal.place({value, value}, gomoku::Player::white);
+  gomoku::Board vertical;
+  for (int y = 1; y <= 4; ++y) {
+    vertical.place({3, y}, gomoku::Player::white);
   }
-  require(diagonal.createsFive({4, 4}, gomoku::Player::white),
-          "boundary diagonal should win");
+  require(vertical.createsFive({3, 0}, gomoku::Player::white),
+          "vertical endpoint should win for White");
+
+  gomoku::Board mainDiagonal;
+  for (int value = 0; value < 4; ++value) {
+    mainDiagonal.place({value, value}, gomoku::Player::black);
+  }
+  require(mainDiagonal.createsFive({4, 4}, gomoku::Player::black),
+          "main diagonal should win");
+
+  gomoku::Board antiDiagonal;
+  for (int value = 0; value < 4; ++value) {
+    antiDiagonal.place({value, 6 - value}, gomoku::Player::white);
+  }
+  require(antiDiagonal.createsFive({4, 2}, gomoku::Player::white),
+          "anti-diagonal should win for White");
 }
 
 void testParser() {
@@ -38,7 +63,7 @@ void testParser() {
   text << "turn black\n";
   text << "target black\n";
   for (int y = 0; y < gomoku::boardSize; ++y) {
-    text << (y == 7 ? ".....XXXX......" : "...............")
+    text << (y == 3 ? ".XXXX.." : ".......")
          << "\n";
   }
   std::istringstream input(text.str());
@@ -130,7 +155,7 @@ void testCheckerSelection() {
           "empty board with Black target must select checkCertificate");
 
   gomoku::Position localPosition = initialPosition;
-  localPosition.board.place({7, 7}, gomoku::Player::black);
+  localPosition.board.place({3, 3}, gomoku::Player::black);
   localPosition.turn = gomoku::Player::white;
   require(!gomoku::usesGlobalCertificateChecker(localPosition, certificate),
           "non-initial root must select checkLocalCertificateAt");
@@ -166,8 +191,8 @@ void testVcfHintCertificate() {
   const auto& rootNode = result.certificate->nodes.front();
   require(rootNode.kind == gomoku::CertificateKind::proverMove,
           "VCF proof should start with a prover move");
-  require(rootNode.move == gomoku::Coord{5, 7},
-          "VCF oracle should choose the double-ended four at (5,7)");
+  require(rootNode.move == gomoku::Coord{1, 3},
+          "VCF oracle should choose the double-ended four at (1,3)");
   require(rootNode.child < result.certificate->nodes.size(),
           "VCF root child should be valid");
   const auto& opponentNode = result.certificate->nodes[rootNode.child];
@@ -230,6 +255,248 @@ void testResourceLimits() {
           "certificate bound should be reported separately");
 }
 
+// ---------------------------------------------------------------------------
+// Defense proof search tests
+// ---------------------------------------------------------------------------
+
+// A full 7x7 board with no five-in-a-row for either player:
+// black iff (x + 2y) mod 4 is 0 or 1; every line is periodic with run <= 4.
+gomoku::Board noFiveFill() {
+  gomoku::Board board;
+  for (int y = 0; y < gomoku::boardSize; ++y) {
+    for (int x = 0; x < gomoku::boardSize; ++x) {
+      const int mod = (x + 2 * y) % 4;
+      board.place({x, y}, (mod == 0 || mod == 1) ? gomoku::Player::black
+                                                 : gomoku::Player::white);
+    }
+  }
+  return board;
+}
+
+// The no-five fill with row 3 carved to a four at (1,3)-(4,3) for `four` and
+// exactly two empty cells (0,3) and (5,3).  The other player's stones keep
+// the periodic fill; the result contains no five for either player.
+gomoku::Board carvedBoard(gomoku::Player four) {
+  gomoku::Board board;
+  for (int y = 0; y < gomoku::boardSize; ++y) {
+    for (int x = 0; x < gomoku::boardSize; ++x) {
+      const gomoku::Coord move{x, y};
+      if ((x == 0 && y == 3) || (x == 5 && y == 3)) {
+        continue;
+      }
+      gomoku::Player player;
+      if (y == 3 && x >= 1 && x <= 4) {
+        player = four;
+      } else {
+        const int mod = (x + 2 * y) % 4;
+        player = (mod == 0 || mod == 1) ? gomoku::Player::black
+                                        : gomoku::Player::white;
+      }
+      board.place(move, player);
+    }
+  }
+  return board;
+}
+
+void testDefenseTerminal() {
+  const gomoku::Board fill = noFiveFill();
+  require(fill.full(), "no-five fill must be full");
+  require(!fill.hasFive(gomoku::Player::black),
+          "no-five fill must not contain a black five");
+  require(!fill.hasFive(gomoku::Player::white),
+          "no-five fill must not contain a white five");
+
+  gomoku::Position root;
+  root.board = fill;
+  const std::optional<gomoku::Outcome> terminal = root.board.terminal();
+  require(terminal.has_value() && *terminal == gomoku::Outcome::draw,
+          "full no-five board must be a draw terminal");
+
+  gomoku::SearchConfig config;
+  gomoku::DefenseSearcher white(config, gomoku::Player::white);
+  const gomoku::DefenseSolveResult result = white.solve(root);
+  require(result.status == gomoku::ProofSearchStatus::found,
+          "a terminal draw must be found immediately");
+  require(result.certificate.has_value(),
+          "terminal draw must emit a certificate");
+  require(result.certificate->nodes.size() == 1,
+          "terminal draw certificate should have one node");
+  gomoku::validateDefenseCertificate(root, *result.certificate);
+
+  // Black five on the board: White cannot prevent, Black's defense closes.
+  gomoku::Board five;
+  for (int x = 0; x < 5; ++x) {
+    five.place({x, 0}, gomoku::Player::black);
+  }
+  gomoku::Position blackWinRoot;
+  blackWinRoot.board = five;
+  require(blackWinRoot.board.terminal().has_value(),
+          "five in a row must be terminal");
+
+  gomoku::DefenseSearcher white2(config, gomoku::Player::white);
+  const gomoku::DefenseSolveResult refuted = white2.solve(blackWinRoot);
+  require(refuted.status == gomoku::ProofSearchStatus::refuted,
+          "an attacker-win terminal must refute the defense");
+
+  gomoku::DefenseSearcher black(config, gomoku::Player::black);
+  const gomoku::DefenseSolveResult blackOk = black.solve(blackWinRoot);
+  require(blackOk.status == gomoku::ProofSearchStatus::found,
+          "a defender-win terminal must close the defense");
+  require(blackOk.certificate.has_value() &&
+              blackOk.certificate->nodes.size() == 1,
+          "defender-win terminal certificate should have one node");
+  gomoku::validateDefenseCertificate(blackWinRoot, *blackOk.certificate);
+}
+
+void testDefenseWhiteImmediateWin() {
+  // White to move, four at (1,3)-(4,3), both ends empty.
+  gomoku::Position root;
+  root.board = carvedBoard(gomoku::Player::white);
+  root.turn = gomoku::Player::white;
+  require(!root.board.terminal().has_value(),
+          "white-four root must be non-terminal");
+  require(root.board.emptyMoves().size() == 2,
+          "white-four root must have exactly two empties");
+
+  gomoku::SearchConfig config;
+  gomoku::DefenseSearcher searcher(config, gomoku::Player::white);
+  const gomoku::DefenseSolveResult result = searcher.solve(root);
+  require(result.status == gomoku::ProofSearchStatus::found,
+          "White should prevent Black by winning immediately");
+  require(result.certificate.has_value(),
+          "found defense must emit a certificate");
+  require(result.certificate->nodes.size() == 2,
+          "defender move plus terminal win should be two nodes");
+  const auto& rootNode = result.certificate->nodes.front();
+  require(rootNode.kind == gomoku::DefenseNodeKind::defenderMove,
+          "White-to-move defense should start with a defender move");
+  gomoku::validateDefenseCertificate(root, *result.certificate);
+
+  std::ostringstream lean;
+  gomoku::writeLeanDefenseCertificate(lean, root, *result.certificate,
+                                      "auditWhiteFour");
+  require(lean.str().find("DefenseCertificate") != std::string::npos,
+          "defense export should use the DefenseCertificate format");
+  require(lean.str().find(".defenderMove") != std::string::npos,
+          "defense export should emit defenderMove nodes");
+  require(lean.str().find("checkDefenseCertificateAt") != std::string::npos,
+          "defense export should call the Lean defense checker");
+  require(lean.str().find("WhiteCanPreventBlackWin") != std::string::npos,
+          "defense export should state the white defense theorem");
+}
+
+void testDefenseAttackerAllReplies() {
+  // Black to move, same two-gap board: White must answer both replies.
+  gomoku::Position root;
+  root.board = carvedBoard(gomoku::Player::white);
+  root.turn = gomoku::Player::black;
+  require(!root.board.terminal().has_value(),
+          "black-to-move root must be non-terminal");
+  require(root.board.emptyMoves().size() == 2,
+          "black-to-move root must have exactly two empties");
+
+  gomoku::SearchConfig config;
+  gomoku::DefenseSearcher searcher(config, gomoku::Player::white);
+  const gomoku::DefenseSolveResult result = searcher.solve(root);
+  require(result.status == gomoku::ProofSearchStatus::found,
+          "White should answer both Black replies");
+  require(result.certificate.has_value(),
+          "found defense must emit a certificate");
+  const auto& rootNode = result.certificate->nodes.front();
+  require(rootNode.kind == gomoku::DefenseNodeKind::attackerMoves,
+          "Black-to-move defense should start with attackerMoves");
+  require(rootNode.children.size() == 2,
+          "attacker node must cover both legal replies");
+  require(result.certificate->nodes.size() == 5,
+          "two-reply defense should have five nodes");
+  gomoku::validateDefenseCertificate(root, *result.certificate);
+
+  // Missing reply must be rejected by the preflight validator.
+  gomoku::DefenseCertificate incomplete = *result.certificate;
+  incomplete.nodes.front().children.pop_back();
+  bool rejected = false;
+  try {
+    gomoku::validateDefenseCertificate(root, incomplete);
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  require(rejected, "preflight must reject an omitted attacker reply");
+
+  // Duplicate reply must be rejected as well.
+  gomoku::DefenseCertificate duplicated = *result.certificate;
+  duplicated.nodes.front().children.push_back(
+      duplicated.nodes.front().children.front());
+  rejected = false;
+  try {
+    gomoku::validateDefenseCertificate(root, duplicated);
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  require(rejected, "preflight must reject a duplicate attacker reply");
+}
+
+void testDefenseRefutedImmediateAttackerWin() {
+  // Black to move with a black four: an immediate winning move refutes
+  // White's defense, so the search must answer Refuted (not Unknown).
+  gomoku::Position root;
+  root.board = carvedBoard(gomoku::Player::black);
+  root.turn = gomoku::Player::black;
+  require(!root.board.terminal().has_value(),
+          "black-four root must be non-terminal");
+
+  gomoku::SearchConfig config;
+  gomoku::DefenseSearcher searcher(config, gomoku::Player::white);
+  const gomoku::DefenseSolveResult result = searcher.solve(root);
+  require(result.status == gomoku::ProofSearchStatus::refuted,
+          "an immediate black win must refute White's defense");
+  require(!result.certificate.has_value(),
+          "refuted search must not emit a certificate");
+
+  // The symmetric defense (Black prevents White) must be found here, since
+  // Black is already threatening to win.
+  gomoku::DefenseSearcher blackSearcher(config, gomoku::Player::black);
+  const gomoku::DefenseSolveResult blackResult = blackSearcher.solve(root);
+  require(blackResult.status == gomoku::ProofSearchStatus::found,
+          "Black's own win threat closes BlackCanPreventWhiteWin");
+  require(blackResult.certificate.has_value(),
+          "black defense must emit a certificate");
+  gomoku::validateDefenseCertificate(root, *blackResult.certificate);
+}
+
+void testDefenseUnknownPropagation() {
+  // A tiny node budget must yield Unknown, never Found or Refuted.
+  gomoku::SearchConfig config;
+  config.maxNodes = 1;
+  config.maxTableEntries = 10'000;
+  gomoku::DefenseSearcher searcher(config, gomoku::Player::white);
+  const gomoku::DefenseSolveResult result = searcher.solve(gomoku::Position{});
+  require(result.status == gomoku::ProofSearchStatus::unknown,
+          "exhausted budget must be Unknown, not Found or Refuted");
+  require(!result.certificate.has_value(),
+          "Unknown search must not emit a certificate");
+
+  // A second run with a fresh searcher and a larger budget must still be
+  // able to find a proof: Unknown results are never cached as permanent.
+  gomoku::SearchConfig generous;
+  generous.maxNodes = 0;
+  gomoku::DefenseSearcher fresh(generous, gomoku::Player::black);
+  gomoku::Position root;
+  root.board = carvedBoard(gomoku::Player::black);
+  root.turn = gomoku::Player::black;
+  const gomoku::DefenseSolveResult found = fresh.solve(root);
+  require(found.status == gomoku::ProofSearchStatus::found,
+          "a fresh unlimited search must still find the defense");
+}
+
+void testDefenseTableLimit() {
+  gomoku::SearchConfig config;
+  config.maxTableEntries = 1;
+  gomoku::DefenseSearcher searcher(config, gomoku::Player::white);
+  const gomoku::DefenseSolveResult result = searcher.solve(gomoku::Position{});
+  require(result.status == gomoku::ProofSearchStatus::unknown,
+          "table exhaustion must be Unknown in defense mode");
+}
+
 }  // namespace
 
 int main() {
@@ -241,6 +508,12 @@ int main() {
     testCheckerSelection();
     testVcfHintCertificate();
     testResourceLimits();
+    testDefenseTerminal();
+    testDefenseWhiteImmediateWin();
+    testDefenseAttackerAllReplies();
+    testDefenseRefutedImmediateAttackerWin();
+    testDefenseUnknownPropagation();
+    testDefenseTableLimit();
     std::cout << "all C++ solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {

@@ -1,7 +1,7 @@
 import Mathlib
 
 /-!
-基础数据层：定义玩家、棋盘格、15×15 坐标与函数式棋盘，并证明落子对棋子数和空格数的影响。
+基础数据层：定义玩家、棋盘格、7×7 坐标与函数式棋盘，并证明落子对棋子数和空格数的影响。
 -/
 
 namespace Gomoku
@@ -58,8 +58,8 @@ def owner : Cell → Option Player
 
 end Cell
 
-abbrev Coord := Fin 15 × Fin 15
--- 用两个范围为 0 至 14 的有限自然数表示 15×15 棋盘坐标。
+abbrev Coord := Fin 7 × Fin 7
+-- 用两个范围为 0 至 6 的有限自然数表示 7×7 棋盘坐标。
 
 structure Board where
   cell : Coord → Cell
@@ -210,7 +210,7 @@ theorem emptyCount_place_of_empty (b : Board) (c : Coord) (p : Player)
 
 instance fullDecidable (b : Board) : Decidable (full b) := by
   exact Fintype.decidableForallFintype
--- 说明有限棋盘是否已满可以通过检查全部 225 个坐标来判定。
+-- 说明有限棋盘是否已满可以通过检查全部 49 个坐标来判定。
 
 end Board
 

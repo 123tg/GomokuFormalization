@@ -141,7 +141,7 @@ checkCertificate c
 checkLocalCertificateAt s c
 ```
 
-`checkCertificate` 是最终 15x15 定理的入口。它额外要求：
+`checkCertificate` 是固定 7×7 全局定理的入口。它额外要求：
 
 - `c.target = .black`；
 - 根编号有效；
@@ -161,45 +161,41 @@ CanForceWin initialPosition .black
 
 `checkLocalCertificateAt s c` 复用完全相同的节点、边、索引和对手覆盖检查，但允许根节点是任意指定局面。它适合测试局部战术和两层证书；局部证书不能因此被解释为空棋盘的全局证明。
 
-这里的 `CompactCertificate` 固定使用 15×15 的 `Position`。`Gomoku.Parametric` 和 `cpp/tools/solve_small_draws.cpp` 的 5×5--8×8 实验属于另一套参数化模型，不能把它们的和棋搜索结果直接交给本检查器。要形式化这些和棋结果，需要单独的参数化和棋证书类型及其 soundness 定理。
+这里的 `CompactCertificate` 固定使用 7×7 的 `Position`。旧的 5×5--8×8 参数化实验
+及其文本结果已经删除，不能把普通搜索日志直接交给本检查器。
 
-主线还提供了 `boardFromStones`、`positionFromStones` 和
-`checkExternalLocalCertificate`。它们固定了“外部程序用棋子数组描述根局面”的
-最小适配格式。数组本身是不可信输入，折叠得到的棋盘会直接交给
-`checkLocalCertificateAt`；因此错误的子局面、非法着法、错误终局标签仍会被拒绝。
-`Gomoku.InteropAudit` 中的通过/拒绝样例与队友 C++ 导出的文件形状一致。
-如果导出器承诺每个占用坐标只出现一次，可以使用
-`checkExternalLocalCertificateStrict`；它先检查数组坐标去重，再执行相同的证书检查。
-普通 `checkExternalLocalCertificate` 保留为兼容接口，但会像 `Board.place` 一样对重复记录
-采取后写覆盖，因此不应把它当作外部历史合法性的证明。
+C++ 导出器会在每个生成模块内写出 `RootStones`，再通过
+`Board.place` 折叠成 `RootBoard` 和 `RootPosition`。这些仍是不可信数据；
+最终依靠 `checkLocalCertificateAt` 或 `checkCertificate` 重新检查。
+精简验收模块 `Gomoku.RuleAudit` 保留了 C++ 导出证书的通过样例和关键拒绝样例。
 
 ## 6. 坐标与棋盘表示
 
 正式坐标是：
 
 ```lean
-abbrev Coord := Fin 15 × Fin 15
+abbrev Coord := Fin 7 × Fin 7
 ```
 
 因此搜索器不应生成越界坐标。`Gomoku.Search` 提供固定的行优先表：
 
 ```lean
-coordAtIndex : Fin 225 -> Coord
-coordIndex : Coord -> Fin 225
+coordAtIndex : Fin 49 -> Coord
+coordIndex : Coord -> Fin 49
 allCoords : Array Coord
 ```
 
 已有定理证明两者互为逆。建议搜索器使用 `coordIndex` 作为数组掩码和缓存键，而向证书写入实际 `Coord`。
 
-当前 C++ 搜索器中的 `Coord {x, y}` 原样导出为 Lean 的 `(x, y)`：`x` 是列，`y` 是行；输入文件按 `y = 0` 到 `14` 逐行读取。C++ bitboard 的线性索引为
+当前 C++ 搜索器中的 `Coord {x, y}` 原样导出为 Lean 的 `(x, y)`：`x` 是列，`y` 是行；输入文件按 `y = 0` 到 `6` 逐行读取。C++ bitboard 的线性索引为
 
 ```text
-index = y * 15 + x
+index = y * 7 + x
 ```
 
 这与 Lean 的 `coordIndex` 行主序一致。不要交换两个坐标分量。
 
-局面键 `PositionKey` 同时保存轮到谁和完整的 225 格棋盘向量。它是无损键，不是可能碰撞的哈希值；缓存不能把两个不同局面合并。
+局面键 `PositionKey` 同时保存轮到谁和完整的 49 格棋盘向量。它是无损键，不是可能碰撞的哈希值；缓存不能把两个不同局面合并。
 
 ## 7. 推荐的搜索流程
 
@@ -215,7 +211,7 @@ index = y * 15 + x
 8. 将候选树编译成 `CompactCertificate`。
 9. 在 Lean 中调用 `checkLocalCertificateAt` 或 `checkCertificate`。
 
-当前仓库中的 `searchCandidateTree`、`candidateTreeCertificate`、`checkedDepthCertificateFor` 是有限深度参考实现。它们不是完整 15x15 求解器，也不能绕过检查器。
+当前仓库中的 `searchCandidateTree`、`candidateTreeCertificate`、`checkedDepthCertificateFor` 是有限深度参考实现。它们不是完整 7×7 求解器，也不能绕过检查器。
 
 当前 `cpp/gomoku_solver` 与上述接口的对应关系如下：
 
@@ -271,7 +267,7 @@ boundedCanForceWin fuel position target
 它不使用搜索器的启发式，只按给定步数检查目标方节点的“存在一个成功着法”和对手节点的
 “所有合法应手都成功”。Lean 已证明：返回 `true` 一定可以推出 `CanForceWin`；反方向在
 `Board.emptyCount position.board + 1` 这个理论上限内也成立。这个定义适合审查搜索器，
-但在完整 15×15 棋盘上通常不可直接穷举。
+但在完整 7×7 棋盘上仍可能有极大的博弈树，不能把这个定义当成高性能求解器。
 
 另外，`boundedCanForceWin_terminal_iff` 统一刻画了所有燃料下的终局结果，
 `boundedCanForceWin_mono` 和 `boundedCanForceWin_mono_of_le` 证明：若某个深度返回
@@ -317,8 +313,7 @@ boundedCanForceWin fuel position target
 目标方必败。
 
 Lean 中的 `searchKey_eq_iff` 已经把这条约束写成定理：两个键相等，当且仅当剩余深度、目标方和
-完整局面同时相等。`SearchAudit` 还用不同深度、不同目标方和不同棋盘的恶意缓存条目做了回归，
-确认这些条目不会被错误复用。
+完整局面同时相等。该定理是缓存键不会合并两个不同查询的形式保证。
 
 缓存命中后仍必须把返回树交给证书检查器。不要把“缓存中存在结果”直接当作 `CanForceWin` 证明。
 当前的 `searchCandidateTreeMemoized` 会返回候选树和更新后的缓存；`searchCandidateTree` 是从空缓存
@@ -333,7 +328,7 @@ Lean 中的 `searchKey_eq_iff` 已经把这条约束写成定理：两个键相�
 
 ## 10. 阶段性验收任务
 
-队友不应一开始就尝试生成完整 15x15 证书。按以下顺序提交：
+队友不应一开始就尝试生成完整 7×7 证书。按以下顺序提交：
 
 ### 第一步：一步胜
 
@@ -368,7 +363,7 @@ example : CanForceWin initialPosition .black :=
 
 `native_decide` 只适合测试模块；正式 soundness 定理仍来自 `compact_certificate_sound`。
 
-当前 C++ 导出器会自动选择检查入口：空 15×15 棋盘、黑方先手且证明目标为黑方时生成 `checkCertificate` 与 `compact_certificate_sound`；其他局部根生成 `checkLocalCertificateAt` 与 `local_certificate_at_sound`。两种路径都不会信任 C++ 自己的胜负判断。
+当前 C++ 导出器会自动选择检查入口：空 7×7 棋盘、黑方先手且证明目标为黑方时生成 `checkCertificate` 与 `compact_certificate_sound`；其他局部根生成 `checkLocalCertificateAt` 与 `local_certificate_at_sound`。两种路径都不会信任 C++ 自己的胜负判断。
 
 ## 11. 每次提交必须附带的信息
 

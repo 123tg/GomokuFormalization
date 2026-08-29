@@ -1,0 +1,9 @@
+turn black
+target white
+XXOOXXO
+OOBBOOX
+XXOOXXO
+.OOOO.X
+XXOOXXO
+OOBBOOX
+XXOOXXO

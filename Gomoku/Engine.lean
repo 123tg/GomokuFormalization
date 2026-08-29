@@ -66,7 +66,7 @@ structure EngineBitboard where
   word2 : UInt64 := 0
   word3 : UInt64 := 0
   deriving DecidableEq, Repr
--- 用四个 64 位字保存一个玩家在 225 个坐标上的占位信息，最后 31 位保持未使用。
+-- 用四个 64 位字保存一个玩家在 49 个坐标上的占位信息；迁移阶段暂不重构既有键结构。
 
 def EngineBitboard.insert (bits : EngineBitboard) (index : Nat) : EngineBitboard :=
   let mask := (1 : UInt64) <<< UInt64.ofNat (index % 64)
@@ -83,7 +83,7 @@ structure EnginePositionKey where
   black : EngineBitboard := {}
   white : EngineBitboard := {}
   deriving DecidableEq, Repr
--- 用轮次和双方各四个 64 位字保存完整局面，替代换位表中的 225 格对象向量。
+-- 用轮次和双方各四个 64 位字保存完整 49 格局面，替代换位表中的对象向量。
 
 def enginePositionKey (s : Position) : EnginePositionKey :=
   allCoords.foldl (fun key c =>
@@ -102,7 +102,7 @@ def EnginePositionKey.play (key : EnginePositionKey) (m : Coord) : EnginePositio
       { turn := .white, black := key.black.insert index, white := key.white }
   | .white =>
       { turn := .black, black := key.black, white := key.white.insert index }
--- 对合法落子增量设置当前玩家占位位并切换轮次，避免每个递归节点重新扫描 225 个格子。
+-- 对合法落子增量设置当前玩家占位位并切换轮次，避免每个递归节点重新扫描 49 个格子。
 
 structure EngineSearchKey where
   config : EngineConfig
@@ -671,11 +671,11 @@ theorem runCheckedEngine_sound {cfg : EngineConfig} {s : Position}
 -- 证明推荐入口一旦返回证书，就能在 Lean 中得到 `CanForceWin s target`。
 
 /- Small executable regressions.  They intentionally use a local tactical
-   position; a complete 15x15 opening search is not part of a regular build. -/
+   position; a complete 7×7 opening search is not part of a regular build. -/
 def enginePackedKeyRegressionMoves : List Coord :=
-  [(0, 0), (4, 3), (4, 4), (8, 7),
-    (8, 8), (12, 11), (12, 12), (14, 14)]
--- 选择跨越四个 64 位分块边界的八个互异坐标，供紧凑键增量更新回归使用。
+  [(0, 0), (6, 0), (0, 1), (6, 1),
+    (0, 5), (6, 5), (0, 6), (6, 6)]
+-- 选择覆盖首尾行和索引 0/48 的八个互异坐标，供紧凑键增量更新回归使用。
 
 def enginePackedKeyRegressionPosition : Position :=
   enginePackedKeyRegressionMoves.foldl (fun s m => play s m) initialPosition
@@ -690,25 +690,25 @@ set_option linter.style.nativeDecide false in
 example :
     enginePackedKeyRegressionIncremental =
       enginePositionKey enginePackedKeyRegressionPosition ∧
-    enginePackedKeyRegressionIncremental.black.word0 = 1 ∧
-    enginePackedKeyRegressionIncremental.black.word1 = 1 ∧
-    enginePackedKeyRegressionIncremental.black.word2 = 1 ∧
-    enginePackedKeyRegressionIncremental.black.word3 = 1 ∧
+    enginePackedKeyRegressionIncremental.black.word0 =
+      ((1 : UInt64) ||| ((1 : UInt64) <<< 7) |||
+        ((1 : UInt64) <<< 35) ||| ((1 : UInt64) <<< 42)) ∧
     enginePackedKeyRegressionIncremental.white.word0 =
-      ((1 : UInt64) <<< 63) ∧
-    enginePackedKeyRegressionIncremental.white.word1 =
-      ((1 : UInt64) <<< 63) ∧
-    enginePackedKeyRegressionIncremental.white.word2 =
-      ((1 : UInt64) <<< 63) ∧
-    enginePackedKeyRegressionIncremental.white.word3 =
-      ((1 : UInt64) <<< 32) := by
+      (((1 : UInt64) <<< 6) ||| ((1 : UInt64) <<< 13) |||
+        ((1 : UInt64) <<< 41) ||| ((1 : UInt64) <<< 48)) ∧
+    enginePackedKeyRegressionIncremental.black.word1 = 0 ∧
+    enginePackedKeyRegressionIncremental.black.word2 = 0 ∧
+    enginePackedKeyRegressionIncremental.black.word3 = 0 ∧
+    enginePackedKeyRegressionIncremental.white.word1 = 0 ∧
+    enginePackedKeyRegressionIncremental.white.word2 = 0 ∧
+    enginePackedKeyRegressionIncremental.white.word3 = 0 := by
   native_decide
--- 验证增量键等于重新扫描所得键，并检查索引 63/64、127/128、191/192 和 224 的分块边界。
+-- 验证增量键等于重新扫描所得键，并检查 7×7 的索引 0 至 48 均落在首个分块。
 
 set_option linter.style.nativeDecide false in
 example :
     enginePositionKey initialPosition ≠
-      enginePositionKey (play initialPosition (7, 7)) := by
+      enginePositionKey (play initialPosition (3, 3)) := by
   native_decide
 -- 验证紧凑键能区分空棋盘和黑方中心首着后的局面。
 
@@ -758,14 +758,14 @@ example :
     (engineProverCandidateMoves engineSelectiveConfig
       searchImmediatePosition).size = 1 ∧
     (engineProverCandidateMoves engineSelectiveConfig
-      searchImmediatePosition)[0]? = some ((4, 7) : Coord) ∧
+      searchImmediatePosition)[0]? = some ((0, 3) : Coord) ∧
     (engineProverCandidateMoves engineSmokeConfig
       engineDefensePosition).size = 2 ∧
-    ((4, 7) : Coord) ∈
+    ((0, 3) : Coord) ∈
       engineProverCandidateMoves engineSmokeConfig engineDefensePosition ∧
-    ((9, 7) : Coord) ∈
+    ((5, 3) : Coord) ∈
       engineProverCandidateMoves engineSmokeConfig engineDefensePosition ∧
-    (engineCandidateMoves engineSmokeConfig engineDefensePosition).size = 221 ∧
+    (engineCandidateMoves engineSmokeConfig engineDefensePosition).size = 45 ∧
     engineBoundedMemoResult.status = .found ∧
     engineBoundedMemoResult.stats.memoEntries = 1 ∧
     engineBoundedMemoResult.stats.memoStoreSkips = 1 ∧

@@ -1,10 +1,12 @@
 #include "gomoku_solver.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -32,16 +34,48 @@ std::size_t parseSize(const std::string& value,
   return static_cast<std::size_t>(result);
 }
 
+std::string normalizeGoal(std::string value) {
+  value.erase(std::remove_if(value.begin(), value.end(),
+      [](char ch) { return ch == '-' || ch == '_' || ch == ' '; }),
+      value.end());
+  std::transform(value.begin(), value.end(), value.begin(),
+      [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  return value;
+}
+
+std::size_t certificateEdgeCount(const gomoku::DefenseCertificate& certificate) {
+  std::size_t edges = 0;
+  for (const gomoku::DefenseCertificateNode& node : certificate.nodes) {
+    switch (node.kind) {
+      case gomoku::DefenseNodeKind::terminal:
+        break;
+      case gomoku::DefenseNodeKind::defenderMove:
+        ++edges;
+        break;
+      case gomoku::DefenseNodeKind::attackerMoves:
+        edges += node.children.size();
+        break;
+    }
+  }
+  return edges;
+}
+
 void usage(std::ostream& output) {
   output <<
       "Usage: gomoku_solver --input POSITION --output CERTIFICATE [options]\n"
+      "       gomoku_solver --prove GOAL [--root empty | --input POSITION]\n"
+      "                     --output CERTIFICATE [options]\n"
       "\n"
       "Options:\n"
-      "  --max-depth N             iterative DFPN ply bound (default 6)\n"
-      "  --max-vcf-depth N         bounded VCF hint horizon (default 7)\n"
-      "  --max-nodes N             expanded-node budget, 0 is unlimited\n"
-      "  --max-vcf-nodes N         VCF probe budget, 0 is unlimited\n"
-      "  --max-table-entries N     transposition-table bound, 0 is unlimited\n"
+      "  --prove GOAL             prevent-black-win | prevent-white-win\n"
+      "  --root MODE              only 'empty' (7x7 empty board, Black to move)\n"
+      "  --input FILE             position file (turn/target or turn only)\n"
+      "  --output FILE            generated Lean certificate file\n"
+      "  --max-depth N            iterative DFPN ply bound (default 6)\n"
+      "  --max-vcf-depth N        bounded VCF hint horizon (default 7)\n"
+      "  --max-nodes N            expanded-node budget, 0 is unlimited\n"
+      "  --max-vcf-nodes N        VCF probe budget, 0 is unlimited\n"
+      "  --max-table-entries N    transposition-table bound, 0 is unlimited\n"
       "  --max-certificate-nodes N emitted certificate bound\n"
       "  --max-prover-moves N      selective target width, 0 is complete\n"
       "  --definition NAME         generated Lean definition prefix\n"
@@ -57,6 +91,8 @@ int main(int argc, char** argv) {
     std::string inputPath;
     std::string outputPath;
     std::string definition = "cppGenerated";
+    std::optional<gomoku::Player> defender;
+    bool rootIsEmpty = false;
 
     for (int index = 1; index < argc; ++index) {
       const std::string option = argv[index];
@@ -73,16 +109,34 @@ int main(int argc, char** argv) {
         outputPath = requireValue();
       } else if (option == "--definition") {
         definition = requireValue();
+      } else if (option == "--prove") {
+        const std::string goal = normalizeGoal(requireValue());
+        if (goal == "preventblackwin") {
+          defender = gomoku::Player::white;
+        } else if (goal == "preventwhitewin") {
+          defender = gomoku::Player::black;
+        } else {
+          throw std::runtime_error(
+              "--prove expects prevent-black-win or prevent-white-win");
+        }
+      } else if (option == "--root") {
+        const std::string mode = requireValue();
+        if (mode != "empty") {
+          throw std::runtime_error("--root only supports 'empty'");
+        }
+        rootIsEmpty = true;
       } else if (option == "--max-depth") {
         const std::uint64_t depth = parseUnsigned(requireValue(), option);
         if (depth > static_cast<std::uint64_t>(gomoku::boardCells)) {
-          throw std::runtime_error("--max-depth cannot exceed 225 plies");
+          throw std::runtime_error("--max-depth cannot exceed " +
+              std::to_string(gomoku::boardCells) + " plies");
         }
         config.maxDepth = static_cast<std::uint16_t>(depth);
       } else if (option == "--max-vcf-depth") {
         const std::uint64_t depth = parseUnsigned(requireValue(), option);
         if (depth > static_cast<std::uint64_t>(gomoku::boardCells)) {
-          throw std::runtime_error("--max-vcf-depth cannot exceed 225 plies");
+          throw std::runtime_error("--max-vcf-depth cannot exceed " +
+              std::to_string(gomoku::boardCells) + " plies");
         }
         config.maxVcfDepth = static_cast<std::uint16_t>(depth);
       } else if (option == "--max-nodes") {
@@ -105,7 +159,97 @@ int main(int argc, char** argv) {
       }
     }
 
-    if (inputPath.empty() || outputPath.empty()) {
+    if (outputPath.empty()) {
+      usage(std::cerr);
+      return 1;
+    }
+
+    if (defender.has_value()) {
+      // ------------------------------------------------------------------
+      // Defense proof mode: complete AND/OR search with Found/Refuted/Unknown.
+      // ------------------------------------------------------------------
+      gomoku::Position root;
+      if (rootIsEmpty) {
+        root = gomoku::Position{};
+      } else {
+        if (inputPath.empty()) {
+          throw std::runtime_error(
+              "defense mode requires --root empty or --input FILE");
+        }
+        std::ifstream input(inputPath);
+        if (!input) {
+          throw std::runtime_error("cannot open position file: " + inputPath);
+        }
+        root = gomoku::parseProblem(input).root;
+      }
+
+      gomoku::DefenseSearcher searcher(config, *defender);
+      const auto started = std::chrono::steady_clock::now();
+      gomoku::DefenseSolveResult result = searcher.solve(root);
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - started);
+
+      std::cout << "board_size=" << gomoku::boardSize << "\n";
+      std::cout << "win_length=" << gomoku::winLength << "\n";
+      std::cout << "rules=standard\n";
+      std::cout << "root=" << (rootIsEmpty ? "empty" : "input") << "\n";
+      std::cout << "proof_goal="
+                << (*defender == gomoku::Player::white
+                        ? "prevent_black_win"
+                        : "prevent_white_win")
+                << "\n";
+      std::cout << "status=" << gomoku::proofSearchStatusName(result.status)
+                << "\n";
+      std::cout << "search_nodes=" << result.stats.expandedNodes << "\n";
+      std::cout << "search_depth=" << result.stats.maxDepthReached << "\n";
+      std::cout << "time_ms=" << elapsed.count() << "\n";
+      std::cout << "cache_entries=" << result.stats.tableEntries << "\n";
+      std::cout << "cache_hits=" << result.stats.tableHits << "\n";
+      std::cout << "d4=false\n";
+      std::cout << "pairing=false\n";
+      std::cout << "partial_pairing=false\n";
+      std::cout << "relevancy=false\n";
+      std::cout << "potential=false\n";
+      std::cout << "dominance=false\n";
+      std::cout << "transposition=true\n";
+
+      if (result.status != gomoku::ProofSearchStatus::found ||
+          !result.certificate.has_value()) {
+        std::cout << "certificate=none\n";
+        std::cout << "certificate_nodes=0\n";
+        std::cout << "certificate_edges=0\n";
+        std::cout << "certificate_bytes=0\n";
+        std::cout << "lean_checker=not-run\n";
+        return result.status == gomoku::ProofSearchStatus::unknown ? 2 : 3;
+      }
+
+      std::ofstream output(outputPath);
+      if (!output) {
+        throw std::runtime_error("cannot open certificate output: " + outputPath);
+      }
+      gomoku::writeLeanDefenseCertificate(output, root, *result.certificate,
+                                           definition);
+      const std::streamoff certificateBytes =
+          static_cast<std::streamoff>(output.tellp());
+      output.flush();
+      if (!output) {
+        throw std::runtime_error("failed to write certificate output: " + outputPath);
+      }
+      std::cout << "certificate=some\n";
+      std::cout << "certificate_nodes=" << result.certificate->nodes.size()
+                << "\n";
+      std::cout << "certificate_edges="
+                << certificateEdgeCount(*result.certificate) << "\n";
+      std::cout << "certificate_bytes=" << certificateBytes << "\n";
+      std::cout << "lean_checker=not-run\n";
+      std::cout << "output=" << outputPath << "\n";
+      return 0;
+    }
+
+    // ------------------------------------------------------------------
+    // Existing force-win mode (regression behaviour unchanged).
+    // ------------------------------------------------------------------
+    if (inputPath.empty()) {
       usage(std::cerr);
       return 1;
     }

@@ -17,35 +17,35 @@ abbrev Searcher := SearchConfig → Option CompactCertificate
 -- 把搜索器抽象为从配置到可选紧凑证书的函数，失败时返回 `none`。
 
 /- The searcher may need a complete executable move list, but this helper is
-   deliberately outside the trusted certificate checker.  `Fin 225` indexes
-   the 15 by 15 board in row-major order and keeps the generated coordinates
+   deliberately outside the trusted certificate checker.  `Fin 49` indexes
+   the 7 by 7 board in row-major order and keeps the generated coordinates
    inside the board by construction. -/
-def coordAtIndex (i : Fin 225) : Coord :=
-  (⟨i.1 / 15, by omega⟩, ⟨i.1 % 15, by omega⟩)
--- 按行优先顺序把 `0 ≤ i < 225` 的索引还原为合法的 15×15 棋盘坐标。
+def coordAtIndex (i : Fin 49) : Coord :=
+  (⟨i.1 % 7, by omega⟩, ⟨i.1 / 7, by omega⟩)
+-- 按行优先顺序把 `0 ≤ i < 49` 的索引还原为合法的 7×7 棋盘坐标。
 
 def allCoords : Array Coord :=
   Array.ofFn coordAtIndex
--- 依次枚举棋盘上的全部 225 个坐标。
+-- 依次枚举棋盘上的全部 49 个坐标。
 
 /- A stable row-major index for a coordinate.  Keeping this inverse to
    `coordAtIndex` lets later search code use O(1) array lookup for masks and
    cached threat information instead of linear `Array.mem` scans. -/
-def coordIndex (c : Coord) : Fin 225 :=
-  ⟨c.1.1 * 15 + c.2.1, by omega⟩
--- 按行优先顺序把棋盘坐标编码为 `Fin 225` 索引。
+def coordIndex (c : Coord) : Fin 49 :=
+  ⟨c.2.1 * 7 + c.1.1, by omega⟩
+-- 按 `index = y * 7 + x` 把棋盘坐标编码为 `Fin 49` 索引。
 
 theorem coordAtIndex_coordIndex (c : Coord) :
     coordAtIndex (coordIndex c) = c := by
   apply Prod.ext
   · apply Fin.ext
     simp [coordAtIndex, coordIndex]
-    omega
   · apply Fin.ext
     simp [coordAtIndex, coordIndex]
+    omega
 -- 证明坐标先编码再解码仍得到原坐标，即 `coordAtIndex` 是 `coordIndex` 的左逆。
 
-theorem coordIndex_coordAtIndex (i : Fin 225) :
+theorem coordIndex_coordAtIndex (i : Fin 49) :
     coordIndex (coordAtIndex i) = i := by
   apply Fin.ext
   simp [coordAtIndex, coordIndex]
@@ -60,10 +60,10 @@ theorem mem_allCoords (c : Coord) : c ∈ allCoords := by
 /- An exact, executable row-major key for transposition tables.  The key is
    intentionally a lossless `Array Cell`, so a later cache cannot merge two
    different board positions by hash collision. -/
-abbrev PositionKey := Player × Vector Cell 225
--- 用当前行棋方和无损的 225 格棋盘向量共同表示局面键，避免哈希碰撞影响正确性。
+abbrev PositionKey := Player × Vector Cell 49
+-- 用当前行棋方和无损的 49 格棋盘向量共同表示局面键，避免哈希碰撞影响正确性。
 
-def boardKey (b : Board) : Vector Cell 225 :=
+def boardKey (b : Board) : Vector Cell 49 :=
   Vector.ofFn (fun i => b.cell (coordAtIndex i))
 -- 把函数式棋盘按行优先顺序展开为固定长度向量。
 
@@ -137,7 +137,7 @@ def candidateMoves (s : Position) (p : Player) : Array Coord :=
 
 /- `candidateMoves` is the simple reference implementation.  The fast
    variant factors the position-level terminal test out of the per-cell
-   filter; this matters because a search node may inspect all 225 cells. -/
+   filter; this matters because a search node may inspect all 49 cells. -/
 def candidateMovesFast (s : Position) (p : Player) : Array Coord :=
   if s.turn = p then
     if terminal s = none then
@@ -465,10 +465,10 @@ theorem mem_winningCellsArray_iff (s : Position) (p : Player) (c : Coord) :
 /- A fixed-size threat mask keeps the one full-board scan of
    `winningCellsArray`, but replaces later linear membership searches with a
    direct row-major lookup. -/
-def winningCellsMask (s : Position) (p : Player) : Vector Bool 225 :=
+def winningCellsMask (s : Position) (p : Player) : Vector Bool 49 :=
   Vector.ofFn (fun i =>
     decide (coordAtIndex i ∈ WinningCells s p))
--- 把全部制胜点预计算为 225 位布尔向量，以便按坐标常数时间查询。
+-- 把全部制胜点预计算为 49 位布尔向量，以便按坐标常数时间查询。
 
 theorem winningCellsMask_get_iff (s : Position) (p : Player) (c : Coord) :
     (winningCellsMask s p).get (coordIndex c) = true ↔
@@ -1211,33 +1211,33 @@ theorem acceptCertificate_sound {c : CompactCertificate}
 /- Executable regression checks for the untrusted candidate generator.  These
    examples check coverage and filtering only; they do not contribute to the
    certificate soundness theorem. -/
-example : allCoords.size = 225 := by
+example : allCoords.size = 49 := by
   native_decide
--- 回归检查：全坐标数组恰好包含 225 个元素。
+-- 回归检查：全坐标数组恰好包含 49 个元素。
 
 example : allCoords[0]? = some ((0, 0) : Coord) := by
   native_decide
 -- 回归检查：行优先数组的首元素是左上角坐标 `(0, 0)`。
 
-example : allCoords[112]? = some ((7, 7) : Coord) := by
+example : allCoords[24]? = some ((3, 3) : Coord) := by
   native_decide
--- 回归检查：行优先数组的中心索引 112 对应坐标 `(7, 7)`。
+-- 回归检查：行优先数组的中心索引 24 对应坐标 `(3, 3)`。
 
-example : allCoords[224]? = some ((14, 14) : Coord) := by
+example : allCoords[48]? = some ((6, 6) : Coord) := by
   native_decide
--- 回归检查：行优先数组的末元素是右下角坐标 `(14, 14)`。
+-- 回归检查：行优先数组的末元素是右下角坐标 `(6, 6)`。
 
 example : coordIndex ((0, 0) : Coord) = 0 := by
   native_decide
 -- 回归检查：左上角的行优先索引为 0。
 
-example : coordIndex ((7, 7) : Coord) = 112 := by
+example : coordIndex ((3, 3) : Coord) = 24 := by
   native_decide
--- 回归检查：中心点的行优先索引为 112。
+-- 回归检查：中心点的行优先索引为 24。
 
-example : coordIndex ((14, 14) : Coord) = 224 := by
+example : coordIndex ((6, 6) : Coord) = 48 := by
   native_decide
--- 回归检查：右下角的行优先索引为 224。
+-- 回归检查：右下角的行优先索引为 48。
 
 example (c : Coord) : coordAtIndex (coordIndex c) = c := by
   exact coordAtIndex_coordIndex c
@@ -1258,11 +1258,11 @@ example :
 
 example :
     containsPositionKey #[positionKey initialPosition]
-      (play initialPosition (7, 7)) = false := by
+      (play initialPosition (3, 3)) = false := by
   native_decide
 -- 回归检查：初始局面键不会误命中已经在中心落子后的局面。
 
-example : positionKey initialPosition ≠ positionKey (play initialPosition (7, 7)) := by
+example : positionKey initialPosition ≠ positionKey (play initialPosition (3, 3)) := by
   intro h
   have hturn := congrArg Prod.fst h
   have hne : (Player.black : Player) ≠ Player.white := by decide
@@ -1276,15 +1276,15 @@ example (s : Position) (p : Player) (c : Coord) :
   exact winningCellsMask_get_iff s p c
 -- 回归检查：制胜点掩码的读取规范可直接用于任意局面、玩家与坐标。
 
-example : (candidateMoves initialPosition .black).size = 225 := by
+example : (candidateMoves initialPosition .black).size = 49 := by
   native_decide
--- 回归检查：初始局面轮到黑方，参考生成器列出全部 225 个落子。
+-- 回归检查：初始局面轮到黑方，参考生成器列出全部 49 个落子。
 
-example : (candidateMovesFast initialPosition .black).size = 225 := by
+example : (candidateMovesFast initialPosition .black).size = 49 := by
   native_decide
--- 回归检查：快速生成器在初始局面同样列出 225 个落子。
+-- 回归检查：快速生成器在初始局面同样列出 49 个落子。
 
-example : ((7, 7) : Coord) ∈ candidateMoves initialPosition .black := by
+example : ((3, 3) : Coord) ∈ candidateMoves initialPosition .black := by
   native_decide
 -- 回归检查：初始局面的中心点属于黑方候选集合。
 
@@ -1297,34 +1297,34 @@ example : (candidateMovesFast initialPosition .white).size = 0 := by
 -- 回归检查：快速生成器也会拒绝非当前玩家的候选查询。
 
 example :
-    (candidateMoves (play initialPosition (7, 7)) .white).size = 224 := by
+    (candidateMoves (play initialPosition (3, 3)) .white).size = 48 := by
   native_decide
--- 回归检查：黑方首步后，参考生成器为白方列出剩余 224 个空点。
+-- 回归检查：黑方首步后，参考生成器为白方列出剩余 48 个空点。
 
 example :
-    (candidateMovesFast (play initialPosition (7, 7)) .white).size = 224 := by
+    (candidateMovesFast (play initialPosition (3, 3)) .white).size = 48 := by
   native_decide
 -- 回归检查：黑方首步后，快速生成器与参考实现具有相同候选数。
 
 example :
-    (orderedCandidateMoves (play initialPosition (7, 7)) .white).size = 224 := by
+    (orderedCandidateMoves (play initialPosition (3, 3)) .white).size = 48 := by
   native_decide
 -- 回归检查：邻近优先排序不改变首步后候选数组的大小。
 
 example :
-    (orderedCandidateMoves (play initialPosition (7, 7)) .white)[0]? =
-      some ((6, 6) : Coord) := by
+    (orderedCandidateMoves (play initialPosition (3, 3)) .white)[0]? =
+      some ((2, 2) : Coord) := by
   native_decide
--- 回归检查：中心有棋子时，排序会把相邻的 `(6, 6)` 放到首位。
+-- 回归检查：中心有棋子时，排序会把相邻的 `(2, 2)` 放到首位。
 
 example :
     ((0, 0) : Coord) ∈
-      orderedCandidateMoves (play initialPosition (7, 7)) .white := by
+      orderedCandidateMoves (play initialPosition (3, 3)) .white := by
   native_decide
 -- 回归检查：即使远离已有棋子，角点仍保留在排序后的完整候选集中。
 
 example :
-    ((7, 7) : Coord) ∉ candidateMoves (play initialPosition (7, 7)) .white := by
+    ((3, 3) : Coord) ∉ candidateMoves (play initialPosition (3, 3)) .white := by
   native_decide
 -- 回归检查：已经被黑棋占据的中心点不会成为白方合法候选。
 
@@ -1333,11 +1333,11 @@ def searchTerminalBoard : Board :=
     (Board.place
       (Board.place
         (Board.place
-          (Board.place Board.empty (5, 7) .black) (6, 7) .black)
-        (7, 7) .black)
-      (8, 7) .black)
-    (9, 7) .black
--- 构造含有一条黑方纵向五连的测试棋盘。
+          (Board.place Board.empty (1, 3) .black) (2, 3) .black)
+        (3, 3) .black)
+      (4, 3) .black)
+    (5, 3) .black
+-- 构造含有一条黑方横向五连的测试棋盘。
 
 def searchTerminalPosition : Position :=
   ⟨searchTerminalBoard, .white⟩
@@ -1351,9 +1351,9 @@ def searchImmediateBoard : Board :=
   Board.place
     (Board.place
       (Board.place
-        (Board.place Board.empty (5, 7) .black) (6, 7) .black)
-      (7, 7) .black)
-    (8, 7) .black
+        (Board.place Board.empty (1, 3) .black) (2, 3) .black)
+      (3, 3) .black)
+    (4, 3) .black
 -- 构造已有连续四颗黑棋、两端可补成五连的立即获胜测试棋盘。
 
 def searchImmediatePosition : Position :=
@@ -1371,23 +1371,23 @@ example :
 -- 回归检查：在该测试局面中，完整终局参考扫描与快速扫描返回相同首个胜着。
 
 example :
-    terminal (play searchImmediatePosition (4, 7)) = some .blackWin := by
+    terminal (play searchImmediatePosition (0, 3)) = some .blackWin := by
   apply createsFiveFast_terminal_of_immediateCandidate
-    (s := searchImmediatePosition) (p := .black) (m := (4, 7))
+    (s := searchImmediatePosition) (p := .black) (m := (0, 3))
   · native_decide
   · native_decide
--- 通过快速检测的可靠性桥证明在 `(4, 7)` 落子后终局结果为黑胜。
+-- 通过快速检测的可靠性桥证明在 `(0, 3)` 落子后终局结果为黑胜。
 
 example :
     (immediateWinningMovesFirst searchImmediatePosition .black)[0]? =
-      some ((4, 7) : Coord) := by
+      some ((0, 3) : Coord) := by
   native_decide
--- 回归检查：立即获胜排序把 `(4, 7)` 放在候选数组首位。
+-- 回归检查：立即获胜排序把 `(0, 3)` 放在候选数组首位。
 
 example :
-    (immediateWinningMovesFirst searchImmediatePosition .black).size = 221 := by
+    (immediateWinningMovesFirst searchImmediatePosition .black).size = 45 := by
   native_decide
--- 回归检查：四个已占据坐标被排除后，重排数组仍含全部 221 个合法空点。
+-- 回归检查：四个已占据坐标被排除后，重排数组仍含全部 45 个合法空点。
 
 example : (immediateCertificateFor searchImmediatePosition .black).isSome := by
   native_decide
@@ -1409,27 +1409,27 @@ def fastVerticalBoard : Board :=
   Board.place
     (Board.place
       (Board.place
-        (Board.place Board.empty (7, 3) .black) (7, 4) .black)
-      (7, 5) .black)
-    (7, 6) .black
+        (Board.place Board.empty (3, 1) .black) (3, 2) .black)
+      (3, 3) .black)
+    (3, 4) .black
 -- 构造缺少第五子的纵向连续四子测试棋盘。
 
 def fastDiagonalUpBoard : Board :=
   Board.place
     (Board.place
       (Board.place
-        (Board.place Board.empty (3, 3) .black) (4, 4) .black)
-      (5, 5) .black)
-    (6, 6) .black
+        (Board.place Board.empty (1, 1) .black) (2, 2) .black)
+      (3, 3) .black)
+    (4, 4) .black
 -- 构造缺少第五子的上升对角线连续四子测试棋盘。
 
 def fastDiagonalDownBoard : Board :=
   Board.place
     (Board.place
       (Board.place
-        (Board.place Board.empty (3, 6) .black) (4, 5) .black)
-      (5, 4) .black)
-    (6, 3) .black
+        (Board.place Board.empty (1, 5) .black) (2, 4) .black)
+      (3, 3) .black)
+    (4, 2) .black
 -- 构造缺少第五子的下降对角线连续四子测试棋盘。
 
 def fastBoundaryBoard : Board :=
@@ -1444,23 +1444,23 @@ def fastBoundaryBoard : Board :=
 def fastInsufficientBoard : Board :=
   Board.place
     (Board.place
-      (Board.place Board.empty (5, 7) .black) (6, 7) .black)
-    (7, 7) .black
+      (Board.place Board.empty (1, 3) .black) (2, 3) .black)
+    (3, 3) .black
 -- 构造只有三颗连续黑棋、无法一步组成五连的反例棋盘。
 
-example : createsFiveFast searchImmediateBoard .black (4, 7) = true := by
+example : createsFiveFast searchImmediateBoard .black (0, 3) = true := by
   native_decide
 -- 回归检查：快速检测能识别补齐横向五连的落子。
 
-example : createsFiveFast fastVerticalBoard .black (7, 7) = true := by
+example : createsFiveFast fastVerticalBoard .black (3, 0) = true := by
   native_decide
 -- 回归检查：快速检测能识别补齐纵向五连的落子。
 
-example : createsFiveFast fastDiagonalUpBoard .black (7, 7) = true := by
+example : createsFiveFast fastDiagonalUpBoard .black (0, 0) = true := by
   native_decide
 -- 回归检查：快速检测能识别补齐上升对角线五连的落子。
 
-example : createsFiveFast fastDiagonalDownBoard .black (7, 2) = true := by
+example : createsFiveFast fastDiagonalDownBoard .black (0, 6) = true := by
   native_decide
 -- 回归检查：快速检测能识别补齐下降对角线五连的落子。
 
@@ -1468,7 +1468,7 @@ example : createsFiveFast fastBoundaryBoard .black (4, 0) = true := by
   native_decide
 -- 回归检查：快速检测能正确处理从棋盘边界开始的五连窗口。
 
-example : createsFiveFast fastInsufficientBoard .black (8, 7) = false := by
+example : createsFiveFast fastInsufficientBoard .black (4, 3) = false := by
   native_decide
 -- 回归检查：仅把三连扩为四连不会被误判为五连。
 
@@ -1477,16 +1477,16 @@ example : ¬ hasAtLeastFive fastInsufficientBoard .black := by
 -- 回归检查：三子反例棋盘本身确实不存在黑方至少五连。
 
 example :
-    createsFiveFast searchImmediateBoard .black (4, 7) = true ↔
-      hasAtLeastFive (searchImmediateBoard.place (4, 7) .black) .black := by
+    createsFiveFast searchImmediateBoard .black (0, 3) = true ↔
+      hasAtLeastFive (searchImmediateBoard.place (0, 3) .black) .black := by
   exact createsFiveFast_iff (by native_decide)
 -- 在具体测试棋盘上实例化快速五连判定与形式化五连谓词的等价定理。
 
 example :
-    createsFiveFast searchImmediateBoard .black (4, 7) = true ↔
-      terminal (play ⟨searchImmediateBoard, .black⟩ (4, 7)) = some .blackWin := by
+    createsFiveFast searchImmediateBoard .black (0, 3) = true ↔
+      terminal (play ⟨searchImmediateBoard, .black⟩ (0, 3)) = some .blackWin := by
   apply createsFiveFast_terminal_iff
-    (s := ⟨searchImmediateBoard, .black⟩) (p := .black) (m := (4, 7))
+    (s := ⟨searchImmediateBoard, .black⟩) (p := .black) (m := (0, 3))
   · rfl
   · native_decide
 -- 在合法测试局面上实例化快速五连判定与落子后黑胜终局的等价定理。

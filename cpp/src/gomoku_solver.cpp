@@ -183,7 +183,8 @@ int neighborhoodScore(const Board& board, Coord move) {
       }
     }
   }
-  score -= std::abs(move.x - 7) + std::abs(move.y - 7);
+  score -= std::abs(move.x - boardSize / 2) +
+      std::abs(move.y - boardSize / 2);
   return score;
 }
 
@@ -204,7 +205,7 @@ bool Board::inside(Coord move) const {
 
 Cell Board::at(Coord move) const {
   if (!inside(move)) {
-    throw std::out_of_range("coordinate outside 15x15 board");
+    throw std::out_of_range("coordinate outside 7x7 board");
   }
   const int index = indexOf(move);
   const std::uint64_t mask = 1ULL << (index % 64);
@@ -224,7 +225,7 @@ bool Board::isEmpty(Coord move) const {
 
 void Board::place(Coord move, Player player) {
   if (!inside(move)) {
-    throw std::out_of_range("cannot place outside 15x15 board");
+    throw std::out_of_range("cannot place outside 7x7 board");
   }
   if (!isEmpty(move)) {
     throw std::runtime_error("cannot place on an occupied point");
@@ -259,7 +260,7 @@ bool Board::createsFive(Coord move, Player player) const {
         cursor.y += sign * direction.y;
       }
     }
-    if (length >= 5) {
+    if (length >= winLength) {
       return true;
     }
   }
@@ -288,7 +289,7 @@ bool Board::hasFive(Player player) const {
           cursor.x += direction.x;
           cursor.y += direction.y;
         }
-        if (length >= 5) {
+        if (length >= winLength) {
           return true;
         }
       }
@@ -858,6 +859,309 @@ SolveResult DfpnSolver::solve(const Position& root) {
   return impl_->solve(root);
 }
 
+// ---------------------------------------------------------------------------
+// Defense proof search
+// ---------------------------------------------------------------------------
+
+namespace {
+
+enum class ProofState : std::uint8_t {
+  found,
+  refuted,
+  unknown,
+};
+
+struct DefenseStateKey {
+  std::array<std::uint64_t, 4> black{};
+  std::array<std::uint64_t, 4> white{};
+  std::uint64_t zobrist = 0;
+  Player turn = Player::black;
+  Player defender = Player::white;
+
+  friend bool operator==(const DefenseStateKey& lhs, const DefenseStateKey& rhs) {
+    return lhs.turn == rhs.turn && lhs.defender == rhs.defender &&
+        lhs.black == rhs.black && lhs.white == rhs.white;
+  }
+};
+
+struct DefenseStateKeyHash {
+  std::size_t operator()(const DefenseStateKey& key) const {
+    std::uint64_t value = key.zobrist;
+    value ^= splitMix64(key.turn == Player::black ? 0x1'0000'0001ULL
+                                                  : 0x2'0000'0002ULL);
+    value ^= splitMix64(key.defender == Player::black ? 0x3'0000'0003ULL
+                                                      : 0x4'0000'0004ULL);
+    return static_cast<std::size_t>(splitMix64(value));
+  }
+};
+
+DefenseStateKey makeDefenseKey(const Position& position, Player defender) {
+  DefenseStateKey key;
+  key.black = position.board.black;
+  key.white = position.board.white;
+  key.zobrist = position.board.zobrist;
+  key.turn = position.turn;
+  key.defender = defender;
+  return key;
+}
+
+enum class DefenseStatus : std::uint8_t {
+  found,
+  refuted,
+};
+
+struct DefenseEntry {
+  DefenseStatus status = DefenseStatus::refuted;
+  std::optional<Coord> chosenMove;
+};
+
+}  // namespace
+
+const char* proofSearchStatusName(ProofSearchStatus status) {
+  switch (status) {
+    case ProofSearchStatus::found:
+      return "found";
+    case ProofSearchStatus::refuted:
+      return "refuted";
+    case ProofSearchStatus::unknown:
+      return "unknown";
+  }
+  return "unknown";
+}
+
+struct DefenseSearcher::Impl {
+  SearchConfig config;
+  Player defender;
+  std::unordered_map<DefenseStateKey, DefenseEntry, DefenseStateKeyHash> table;
+  SearchStats stats;
+  std::uint16_t maxDepthReached = 0;
+  bool stopped = false;
+  std::string unknownReason;
+
+  explicit Impl(SearchConfig configValue, Player defenderValue)
+      : config(configValue), defender(defenderValue) {
+    table.reserve(std::min<std::size_t>(config.maxTableEntries == 0
+        ? 262'144 : config.maxTableEntries, 262'144));
+  }
+
+  std::vector<Coord> orderedEmptyMoves(const Board& board) const {
+    std::vector<Coord> moves = board.emptyMoves();
+    std::stable_sort(moves.begin(), moves.end(),
+        [&board](Coord lhs, Coord rhs) {
+          const int lhsScore = neighborhoodScore(board, lhs);
+          const int rhsScore = neighborhoodScore(board, rhs);
+          if (lhsScore != rhsScore) {
+            return lhsScore > rhsScore;
+          }
+          if (lhs.y != rhs.y) {
+            return lhs.y < rhs.y;
+          }
+          return lhs.x < rhs.x;
+        });
+    return moves;
+  }
+
+  // Complete AND/OR proof search for "defender prevents the attacker's win".
+  // Terminal nodes succeed exactly for draw or defender win.  Attacker nodes
+  // enumerate every legal move; one refuted child refutes the node.  Defender
+  // nodes try moves in order; the first found child proves the node.  Found
+  // and Refuted results are cached only when the whole subtree below was
+  // searched without hitting a limit; Unknown is never cached and propagates
+  // to the root, so a limited search can never produce a proof.
+  ProofState proveDefense(const Position& position, std::uint16_t depth) {
+    if (stopped) {
+      return ProofState::unknown;
+    }
+    if (depth > maxDepthReached) {
+      maxDepthReached = depth;
+    }
+    const DefenseStateKey key = makeDefenseKey(position, defender);
+    const auto cached = table.find(key);
+    if (cached != table.end()) {
+      ++stats.tableHits;
+      return cached->second.status == DefenseStatus::found
+          ? ProofState::found
+          : ProofState::refuted;
+    }
+    if (config.maxTableEntries != 0 &&
+        table.size() >= config.maxTableEntries) {
+      stopped = true;
+      unknownReason = "table limit";
+      return ProofState::unknown;
+    }
+    const std::optional<Outcome> terminal = position.board.terminal();
+    if (terminal.has_value()) {
+      if (*terminal == playerOutcome(other(defender))) {
+        table.insert_or_assign(key,
+            DefenseEntry{DefenseStatus::refuted, std::nullopt});
+        return ProofState::refuted;
+      }
+      table.insert_or_assign(key,
+          DefenseEntry{DefenseStatus::found, std::nullopt});
+      return ProofState::found;
+    }
+    if (config.maxNodes != 0 && stats.expandedNodes >= config.maxNodes) {
+      stopped = true;
+      unknownReason = "node limit";
+      return ProofState::unknown;
+    }
+    ++stats.expandedNodes;
+
+    const std::vector<Coord> moves = orderedEmptyMoves(position.board);
+    if (position.turn == defender) {
+      bool sawUnknown = false;
+      for (const Coord move : moves) {
+        if (stopped) {
+          return ProofState::unknown;
+        }
+        const ProofState child = proveDefense(play(position, move),
+            static_cast<std::uint16_t>(depth + 1));
+        if (child == ProofState::found) {
+          if (!stopped) {
+            table.insert_or_assign(key,
+                DefenseEntry{DefenseStatus::found, move});
+          }
+          return ProofState::found;
+        }
+        if (child == ProofState::unknown) {
+          sawUnknown = true;
+        }
+      }
+      if (sawUnknown || stopped) {
+        return ProofState::unknown;
+      }
+      table.insert_or_assign(key,
+          DefenseEntry{DefenseStatus::refuted, std::nullopt});
+      return ProofState::refuted;
+    }
+
+    bool sawUnknown = false;
+    for (const Coord move : moves) {
+      if (stopped) {
+        return ProofState::unknown;
+      }
+      const ProofState child = proveDefense(play(position, move),
+          static_cast<std::uint16_t>(depth + 1));
+      if (child == ProofState::refuted) {
+        if (!stopped) {
+          table.insert_or_assign(key,
+              DefenseEntry{DefenseStatus::refuted, std::nullopt});
+        }
+        return ProofState::refuted;
+      }
+      if (child == ProofState::unknown) {
+        sawUnknown = true;
+      }
+    }
+    if (sawUnknown || stopped) {
+      return ProofState::unknown;
+    }
+    table.insert_or_assign(key,
+        DefenseEntry{DefenseStatus::found, std::nullopt});
+    return ProofState::found;
+  }
+
+  std::size_t emitDefenseProof(const Position& position, std::uint16_t depth,
+                               DefenseCertificate& certificate,
+                               std::size_t sourceParent, Coord sourceMove) {
+    if (config.maxCertificateNodes != 0 &&
+        certificate.nodes.size() >= config.maxCertificateNodes) {
+      throw std::length_error("defense certificate node limit reached");
+    }
+    const std::size_t index = certificate.nodes.size();
+    DefenseCertificateNode placeholder;
+    placeholder.position = position;
+    placeholder.sourceParent = sourceParent;
+    placeholder.sourceMove = sourceMove;
+    certificate.nodes.push_back(std::move(placeholder));
+
+    const std::optional<Outcome> terminal = position.board.terminal();
+    if (terminal.has_value()) {
+      certificate.nodes[index].kind = DefenseNodeKind::terminal;
+      certificate.nodes[index].outcome = *terminal;
+      return index;
+    }
+
+    const DefenseStateKey key = makeDefenseKey(position, defender);
+    if (position.turn == defender) {
+      const auto found = table.find(key);
+      if (found == table.end() ||
+          found->second.status != DefenseStatus::found ||
+          !found->second.chosenMove.has_value()) {
+        throw std::logic_error(
+            "defense export: defender node has no proved move");
+      }
+      const Coord move = *found->second.chosenMove;
+      certificate.nodes[index].kind = DefenseNodeKind::defenderMove;
+      certificate.nodes[index].move = move;
+      certificate.nodes[index].child = emitDefenseProof(play(position, move),
+          static_cast<std::uint16_t>(depth + 1), certificate, index, move);
+      return index;
+    }
+
+    certificate.nodes[index].kind = DefenseNodeKind::attackerMoves;
+    const std::vector<Coord> moves = orderedEmptyMoves(position.board);
+    for (const Coord move : moves) {
+      const Position childPosition = play(position, move);
+      const auto childIt = table.find(makeDefenseKey(childPosition, defender));
+      if (childIt == table.end() ||
+          childIt->second.status != DefenseStatus::found) {
+        throw std::logic_error(
+            "defense export: attacker node has an unproved child");
+      }
+      const std::size_t child = emitDefenseProof(childPosition,
+          static_cast<std::uint16_t>(depth + 1), certificate, index, move);
+      certificate.nodes[index].children.push_back({move, child});
+    }
+    return index;
+  }
+
+  DefenseSolveResult solve(const Position& root) {
+    stats = {};
+    table.clear();
+    stopped = false;
+    unknownReason.clear();
+    maxDepthReached = 0;
+
+    DefenseSolveResult result;
+    const ProofState rootState = proveDefense(root, 0);
+    result.stats = stats;
+    result.stats.tableEntries = table.size();
+    result.stats.maxDepthReached = maxDepthReached;
+    if (stopped || rootState == ProofState::unknown) {
+      result.status = ProofSearchStatus::unknown;
+      return result;
+    }
+    if (rootState == ProofState::refuted) {
+      result.status = ProofSearchStatus::refuted;
+      return result;
+    }
+    DefenseCertificate certificate;
+    certificate.defender = defender;
+    try {
+      emitDefenseProof(root, 0, certificate, noParent, {});
+    } catch (const std::length_error&) {
+      result.status = ProofSearchStatus::unknown;
+      result.stats.certificateExhausted = true;
+      return result;
+    }
+    result.status = ProofSearchStatus::found;
+    result.certificate = std::move(certificate);
+    return result;
+  }
+};
+
+DefenseSearcher::DefenseSearcher(SearchConfig config, Player defender)
+    : impl_(std::make_unique<Impl>(config, defender)) {}
+
+DefenseSearcher::~DefenseSearcher() = default;
+DefenseSearcher::DefenseSearcher(DefenseSearcher&&) noexcept = default;
+DefenseSearcher& DefenseSearcher::operator=(DefenseSearcher&&) noexcept = default;
+
+DefenseSolveResult DefenseSearcher::solve(const Position& root) {
+  return impl_->solve(root);
+}
+
 ParsedProblem parseProblem(std::istream& input) {
   std::vector<std::string> rows;
   Player turn = Player::black;
@@ -897,13 +1201,15 @@ ParsedProblem parseProblem(std::istream& input) {
     throw std::runtime_error("position file must specify turn and target");
   }
   if (rows.size() != boardSize) {
-    throw std::runtime_error("position file must contain exactly 15 board rows");
+    throw std::runtime_error("position file must contain exactly " +
+        std::to_string(boardSize) + " board rows");
   }
 
   Board board;
   for (int y = 0; y < boardSize; ++y) {
     if (rows[static_cast<std::size_t>(y)].size() != boardSize) {
-      throw std::runtime_error("every board row must contain exactly 15 cells");
+      throw std::runtime_error("every board row must contain exactly " +
+          std::to_string(boardSize) + " cells");
     }
     for (int x = 0; x < boardSize; ++x) {
       const char cell = rows[static_cast<std::size_t>(y)]
@@ -1132,10 +1438,222 @@ void writeLeanCertificate(std::ostream& output, const Position& root,
   output << "end Gomoku.Generated\n";
 }
 
+void validateDefenseCertificate(const Position& root,
+                                const DefenseCertificate& certificate) {
+  if (certificate.nodes.empty()) {
+    throw std::runtime_error("cannot export an empty defense certificate");
+  }
+  if (!(certificate.nodes.front().position == root)) {
+    throw std::runtime_error(
+        "defense certificate root position does not match input root");
+  }
+
+  const auto fail = [](std::size_t index, const std::string& message) {
+    throw std::runtime_error("invalid defense certificate node " +
+        std::to_string(index) + ": " + message);
+  };
+  const auto checkChild = [&](std::size_t index, const Position& position,
+                              Coord move, std::size_t child) {
+    if (!position.board.inside(move) || !position.board.isEmpty(move)) {
+      fail(index, "edge move is not an empty in-range coordinate");
+    }
+    if (child <= index || child >= certificate.nodes.size()) {
+      fail(index, "child reference must be in range and greater than parent");
+    }
+    if (!(certificate.nodes[child].position == play(position, move))) {
+      fail(index, "child position does not equal play(parent, move)");
+    }
+  };
+
+  for (std::size_t index = 0; index < certificate.nodes.size(); ++index) {
+    const DefenseCertificateNode& node = certificate.nodes[index];
+    if (index == 0) {
+      if (node.sourceParent != noParent) {
+        fail(index, "root must not have an exporter source parent");
+      }
+    } else {
+      if (node.sourceParent == noParent || node.sourceParent >= index) {
+        fail(index, "exporter source parent must precede the node");
+      }
+      const Position& source = certificate.nodes[node.sourceParent].position;
+      if (source.board.terminal().has_value() ||
+          !source.board.inside(node.sourceMove) ||
+          !source.board.isEmpty(node.sourceMove) ||
+          !(node.position == play(source, node.sourceMove))) {
+        fail(index, "exporter source edge does not reconstruct the node position");
+      }
+    }
+
+    const std::optional<Outcome> terminal = node.position.board.terminal();
+    switch (node.kind) {
+      case DefenseNodeKind::terminal:
+        if (!terminal.has_value() || *terminal != node.outcome ||
+            (node.outcome != playerOutcome(certificate.defender) &&
+             node.outcome != Outcome::draw)) {
+          fail(index, "terminal label must be the actual outcome and not the attacker's win");
+        }
+        break;
+      case DefenseNodeKind::defenderMove:
+        if (terminal.has_value()) {
+          fail(index, "defenderMove position is already terminal");
+        }
+        if (node.position.turn != certificate.defender) {
+          fail(index, "defenderMove turn does not equal certificate defender");
+        }
+        checkChild(index, node.position, node.move, node.child);
+        break;
+      case DefenseNodeKind::attackerMoves: {
+        if (terminal.has_value()) {
+          fail(index, "attackerMoves position is already terminal");
+        }
+        if (node.position.turn != other(certificate.defender)) {
+          fail(index, "attackerMoves turn is not the attacker's turn");
+        }
+        const std::vector<Coord> legalMoves = node.position.board.emptyMoves();
+        if (node.children.size() != legalMoves.size()) {
+          fail(index, "attackerMoves must contain every legal move exactly once");
+        }
+        std::array<bool, boardCells> covered{};
+        for (const auto& childEdge : node.children) {
+          const Coord move = childEdge.first;
+          if (!node.position.board.inside(move)) {
+            fail(index, "attacker edge coordinate is outside the board");
+          }
+          const std::size_t moveIndex = static_cast<std::size_t>(indexOf(move));
+          if (covered[moveIndex]) {
+            fail(index, "attackerMoves contains a duplicate move");
+          }
+          covered[moveIndex] = true;
+          checkChild(index, node.position, move, childEdge.second);
+        }
+        for (const Coord move : legalMoves) {
+          if (!covered[static_cast<std::size_t>(indexOf(move))]) {
+            fail(index, "attackerMoves omits a legal move");
+          }
+        }
+        break;
+      }
+    }
+  }
+}
+
+void writeLeanDefenseCertificate(std::ostream& output, const Position& root,
+                                 const DefenseCertificate& certificate,
+                                 const std::string& definitionPrefix) {
+  validateDefenseCertificate(root, certificate);
+  const std::string prefix = sanitizeIdentifier(definitionPrefix);
+  output << "import Gomoku.Defense\n\n";
+  output << "namespace Gomoku.Generated\n\n";
+  output << "/- Generated by cpp/gomoku_solver.  The generator is untrusted;\n";
+  output << "   interface: DefenseCertificate-v1, root index 0, parent < child;\n";
+  output << "   the theorem below depends on the existing Lean checker. -/\n";
+  output << "def " << prefix << "RootStones : Array (Coord × Player) := #[\n";
+  bool firstStone = true;
+  for (int y = 0; y < boardSize; ++y) {
+    for (int x = 0; x < boardSize; ++x) {
+      const Coord move{x, y};
+      const Cell cell = root.board.at(move);
+      if (cell == Cell::empty) {
+        continue;
+      }
+      if (!firstStone) {
+        output << ",\n";
+      }
+      firstStone = false;
+      output << "  (" << leanCoord(move) << ", "
+             << leanPlayer(cell == Cell::black ? Player::black
+                                               : Player::white)
+             << ")";
+    }
+  }
+  output << "\n]\n\n";
+  output << "def " << prefix << "RootBoard : Board :=\n";
+  output << "  " << prefix
+         << "RootStones.foldl (fun board stone =>\n";
+  output << "    Board.place board stone.1 stone.2) Board.empty\n\n";
+  output << "def " << prefix << "RootPosition : Position :=\n";
+  output << "  ⟨" << prefix << "RootBoard, " << leanPlayer(root.turn)
+         << "⟩\n\n";
+
+  for (std::size_t index = 0; index < certificate.nodes.size(); ++index) {
+    const DefenseCertificateNode& node = certificate.nodes[index];
+    output << "def " << prefix << "Position" << index
+           << " : Position :=\n  ";
+    if (index == 0) {
+      output << prefix << "RootPosition\n\n";
+    } else {
+      if (node.sourceParent == noParent || node.sourceParent >= index) {
+        throw std::runtime_error(
+            "defense certificate exporter requires parent-before-child order");
+      }
+      output << "play " << prefix << "Position" << node.sourceParent << " "
+             << leanCoord(node.sourceMove) << "\n\n";
+    }
+  }
+
+  output << "def " << prefix << "Certificate : DefenseCertificate :=\n";
+  output << "  { defender := " << leanPlayer(certificate.defender) << "\n";
+  output << "    root := 0\n";
+  output << "    nodes := #[\n";
+  for (std::size_t index = 0; index < certificate.nodes.size(); ++index) {
+    const DefenseCertificateNode& node = certificate.nodes[index];
+    output << "      ";
+    if (node.kind == DefenseNodeKind::terminal) {
+      output << ".terminal " << prefix << "Position" << index << " "
+             << leanOutcome(node.outcome);
+    } else if (node.kind == DefenseNodeKind::defenderMove) {
+      output << ".defenderMove " << prefix << "Position" << index << " "
+             << leanCoord(node.move) << " " << node.child;
+    } else {
+      output << ".attackerMoves " << prefix << "Position" << index << " #[";
+      for (std::size_t childIndex = 0; childIndex < node.children.size();
+           ++childIndex) {
+        if (childIndex != 0) {
+          output << ", ";
+        }
+        output << "(" << leanCoord(node.children[childIndex].first) << ", "
+               << node.children[childIndex].second << ")";
+      }
+      output << "]";
+    }
+    output << (index + 1 == certificate.nodes.size() ? "\n" : ",\n");
+  }
+  output << "    ] }\n\n";
+
+  const bool globalRoot = (root == Position{});
+  output << "set_option linter.style.nativeDecide false in\n";
+  output << "theorem " << prefix << "Certificate_checked :\n";
+  if (globalRoot) {
+    output << "    checkDefenseCertificateAt initialPosition " << prefix
+           << "Certificate = true := by\n";
+  } else {
+    output << "    checkDefenseCertificateAt " << prefix << "RootPosition "
+           << prefix << "Certificate = true := by\n";
+  }
+  output << "  native_decide\n\n";
+
+  const std::string positionName = globalRoot
+      ? "initialPosition"
+      : (prefix + "RootPosition");
+  output << "theorem " << prefix << "Defense_sound :\n";
+  if (certificate.defender == Player::white) {
+    output << "    WhiteCanPreventBlackWin " << positionName << " :=\n";
+    output << "  white_defense_certificate_sound " << positionName << " "
+           << prefix << "Certificate rfl " << prefix
+           << "Certificate_checked\n\n";
+  } else {
+    output << "    BlackCanPreventWhiteWin " << positionName << " :=\n";
+    output << "  black_defense_certificate_sound " << positionName << " "
+           << prefix << "Certificate rfl " << prefix
+           << "Certificate_checked\n\n";
+  }
+  output << "end Gomoku.Generated\n";
+}
+
 Position immediateWinExample() {
   Board board;
-  for (int x = 5; x <= 8; ++x) {
-    board.place({x, 7}, Player::black);
+  for (int x = 1; x <= 4; ++x) {
+    board.place({x, 3}, Player::black);
   }
   return {board, Player::black};
 }
@@ -1145,13 +1663,13 @@ Position opponentForkExample() {
   for (int y = 0; y < boardSize; ++y) {
     for (int x = 0; x < boardSize; ++x) {
       const Coord move{x, y};
-      if (move == Coord{4, 7} || move == Coord{9, 7}) {
+      if (move == Coord{0, 3} || move == Coord{5, 3}) {
         continue;
       }
-      if (move == Coord{5, 7} || move == Coord{6, 7} ||
-          move == Coord{7, 7} || move == Coord{8, 7}) {
+      if (move == Coord{1, 3} || move == Coord{2, 3} ||
+          move == Coord{3, 3} || move == Coord{4, 3}) {
         board.place(move, Player::black);
-      } else if ((x + 2 * y) % 5 < 2) {
+      } else if ((x + 2 * y) % 4 < 2) {
         board.place(move, Player::black);
       } else {
         board.place(move, Player::white);
@@ -1166,14 +1684,16 @@ Position vcfOpenFourExample() {
   for (int y = 0; y < boardSize; ++y) {
     for (int x = 0; x < boardSize; ++x) {
       const Coord move{x, y};
-      if (move == Coord{4, 7} || move == Coord{5, 7} ||
-          move == Coord{9, 7}) {
+      if (move == Coord{0, 3} || move == Coord{1, 3} ||
+          move == Coord{5, 3}) {
         continue;
       }
-      if (move == Coord{6, 7} || move == Coord{7, 7} ||
-          move == Coord{8, 7}) {
+      if (move == Coord{2, 3} || move == Coord{3, 3} ||
+          move == Coord{4, 3}) {
         board.place(move, Player::black);
-      } else if ((x + 2 * y) % 5 < 2) {
+      } else if (move == Coord{6, 3}) {
+        board.place(move, Player::white);
+      } else if ((x + 2 * y) % 4 < 2) {
         board.place(move, Player::black);
       } else {
         board.place(move, Player::white);

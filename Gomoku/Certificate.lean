@@ -415,7 +415,7 @@ def checkCertificate (c : CompactCertificate) : Bool :=
    board with Black to move.  This is the interface for tactic certificates
    and for small search results rooted at an arbitrary reachable position.
    It does not weaken `checkCertificate`, whose root convention is part of the
-   statement of the 15x15 theorem. -/
+   statement of the fixed 7×7 theorem. -/
 def checkLocalCertificate (c : CompactCertificate) : Bool :=
   c.root < c.nodes.size &&
     (c.nodes.mapIdx (fun i node => checkNodeAt c.target c.nodes i node)).all id

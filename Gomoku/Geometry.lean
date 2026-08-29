@@ -42,25 +42,25 @@ instance : Fintype Direction :=
     cases d <;> simp [directions]⟩
 -- 证明 Direction 是有限类型，使程序可以穷举所有四个方向。
 
-private def toFin15 (x : Int) (h : 0 ≤ x ∧ x < 15) : Fin 15 :=
+private def toFin7 (x : Int) (h : 0 ≤ x ∧ x < 7) : Fin 7 :=
   ⟨x.toNat, by omega⟩
--- 在已有边界证明 h 的前提下，把整数 x 安全转换为 Fin 15。
+-- 在已有边界证明 h 的前提下，把整数 x 安全转换为 Fin 7。
 
 def step (c : Coord) (d : Direction) (n : Int) : Option Coord :=
   let x := (c.1 : Int) + n * Direction.dx d
   let y := (c.2 : Int) + n * Direction.dy d
-  if h : 0 ≤ x ∧ x < 15 ∧ 0 ≤ y ∧ y < 15 then
-    some (toFin15 x ⟨h.1, h.2.1⟩, toFin15 y ⟨h.2.2.1, h.2.2.2⟩)
+  if h : 0 ≤ x ∧ x < 7 ∧ 0 ≤ y ∧ y < 7 then
+    some (toFin7 x ⟨h.1, h.2.1⟩, toFin7 y ⟨h.2.2.1, h.2.2.2⟩)
   else
     none
--- 从坐标 c 沿方向 d 移动 n 步；结果越出 15×15 棋盘时返回 none。
+-- 从坐标 c 沿方向 d 移动 n 步；结果越出 7×7 棋盘时返回 none。
 
 theorem step_reverse {c q : Coord} {d : Direction} {n : Int}
     (h : step c d n = some q) : step q d (-n) = some c := by
   rcases c with ⟨⟨cx, hcx⟩, ⟨cy, hcy⟩⟩
   rcases q with ⟨⟨qx, hqx⟩, ⟨qy, hqy⟩⟩
   cases d <;>
-    simp [step, Direction.dx, Direction.dy, toFin15] at h ⊢ <;>
+    simp [step, Direction.dx, Direction.dy, toFin7] at h ⊢ <;>
     omega
 -- 说明有效步进可以用相反步数撤销：从 c 到 q 后再走 -n 步会回到 c。
 
@@ -74,14 +74,14 @@ theorem step_compose {c q r : Coord} {d : Direction} {a b : Int}
   rcases q with ⟨⟨qx, hqx⟩, ⟨qy, hqy⟩⟩
   rcases r with ⟨⟨rx, hrx⟩, ⟨ry, hry⟩⟩
   cases d <;>
-    simp [step, Direction.dx, Direction.dy, toFin15] at h₁ h₂ ⊢ <;>
+    simp [step, Direction.dx, Direction.dy, toFin7] at h₁ h₂ ⊢ <;>
     omega
 
 @[simp] theorem step_zero (c : Coord) (d : Direction) :
     step c d 0 = some c := by
   rcases c with ⟨⟨cx, hcx⟩, ⟨cy, hcy⟩⟩
   cases d <;>
-    simp [step, Direction.dx, Direction.dy, toFin15] <;>
+    simp [step, Direction.dx, Direction.dy, toFin7] <;>
     omega
 
 /- The two endpoint offsets of a straight open four cannot identify the same
@@ -97,28 +97,28 @@ theorem step_neg_one_ne_four {c q : Coord} {d : Direction}
       rcases h₁ with ⟨h₁, e₁⟩
       rcases h₂ with ⟨h₂, e₂⟩
       have hx := congrArg (fun z : Coord => z.1.1) (e₁.trans e₂.symm)
-      simp [toFin15] at hx
+      simp [toFin7] at hx
       omega
   | vertical =>
       simp [step, Direction.dx, Direction.dy] at h₁ h₂
       rcases h₁ with ⟨h₁, e₁⟩
       rcases h₂ with ⟨h₂, e₂⟩
       have hy := congrArg (fun z : Coord => z.2.1) (e₁.trans e₂.symm)
-      simp [toFin15] at hy
+      simp [toFin7] at hy
       omega
   | diagonalUp =>
       simp [step, Direction.dx, Direction.dy] at h₁ h₂
       rcases h₁ with ⟨h₁, e₁⟩
       rcases h₂ with ⟨h₂, e₂⟩
       have hx := congrArg (fun z : Coord => z.1.1) (e₁.trans e₂.symm)
-      simp [toFin15] at hx
+      simp [toFin7] at hx
       omega
   | diagonalDown =>
       simp [step, Direction.dx, Direction.dy] at h₁ h₂
       rcases h₁ with ⟨h₁, e₁⟩
       rcases h₂ with ⟨h₂, e₂⟩
       have hx := congrArg (fun z : Coord => z.1.1) (e₁.trans e₂.symm)
-      simp [toFin15] at hx
+      simp [toFin7] at hx
       omega
 
 /- Re-rooting a line at its left endpoint shifts every offset by one.  The

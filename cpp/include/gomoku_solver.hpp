@@ -12,7 +12,8 @@
 
 namespace gomoku {
 
-constexpr int boardSize = 15;
+constexpr int boardSize = 7;
+constexpr int winLength = 5;
 constexpr int boardCells = boardSize * boardSize;
 
 enum class Player : std::uint8_t {
@@ -103,8 +104,10 @@ struct SearchStats {
   std::uint64_t vcfNodes = 0;
   std::uint64_t vcfTableHits = 0;
   std::size_t tableEntries = 0;
+  std::uint16_t maxDepthReached = 0;
   bool vcfRootSolved = false;
   bool vcfBudgetExhausted = false;
+  bool certificateExhausted = false;
 };
 
 enum class CertificateKind : std::uint8_t {
@@ -138,6 +141,75 @@ struct SolveResult {
   SearchStats stats;
   std::optional<Certificate> certificate;
 };
+
+// ---------------------------------------------------------------------------
+// Defense certificates: prove "the defender can prevent the attacker's win"
+// (WhiteCanPreventBlackWin / BlackCanPreventWhiteWin in Lean).  The search is
+// a separate complete AND/OR proof search: attacker nodes must cover every
+// legal move, defender nodes need one move, terminal nodes succeed exactly for
+// draw or defender win.  Limits yield Unknown, never a proof or a refutation.
+// ---------------------------------------------------------------------------
+
+enum class DefenseNodeKind : std::uint8_t {
+  terminal,
+  defenderMove,
+  attackerMoves,
+};
+
+struct DefenseCertificateNode {
+  DefenseNodeKind kind = DefenseNodeKind::terminal;
+  Position position;
+  Outcome outcome = Outcome::draw;
+  Coord move{};
+  std::size_t child = 0;
+  std::vector<std::pair<Coord, std::size_t>> children;
+
+  // The exporter uses one already-emitted parent to define this position as
+  // `play parent move`.  This metadata is not part of DefenseCertificate.
+  std::size_t sourceParent = static_cast<std::size_t>(-1);
+  Coord sourceMove{};
+};
+
+struct DefenseCertificate {
+  Player defender = Player::white;
+  std::vector<DefenseCertificateNode> nodes;
+};
+
+enum class ProofSearchStatus : std::uint8_t {
+  found,
+  refuted,
+  unknown,
+};
+
+const char* proofSearchStatusName(ProofSearchStatus status);
+
+struct DefenseSolveResult {
+  ProofSearchStatus status = ProofSearchStatus::unknown;
+  SearchStats stats;
+  std::optional<DefenseCertificate> certificate;
+};
+
+class DefenseSearcher {
+ public:
+  DefenseSearcher(SearchConfig config, Player defender);
+  ~DefenseSearcher();
+  DefenseSearcher(DefenseSearcher&&) noexcept;
+  DefenseSearcher& operator=(DefenseSearcher&&) noexcept;
+  DefenseSearcher(const DefenseSearcher&) = delete;
+  DefenseSearcher& operator=(const DefenseSearcher&) = delete;
+
+  DefenseSolveResult solve(const Position& root);
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
+void validateDefenseCertificate(const Position& root,
+                                const DefenseCertificate& certificate);
+void writeLeanDefenseCertificate(std::ostream& output, const Position& root,
+                                 const DefenseCertificate& certificate,
+                                 const std::string& definitionPrefix);
 
 class DfpnSolver {
  public:
