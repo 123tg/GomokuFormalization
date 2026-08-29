@@ -491,6 +491,9 @@ int main(int argc, char** argv) {
   bool sweepMode = false;
   bool testMode = false;
   bool depth4Mode = false;
+  bool extractMode = false;
+  std::vector<Coord> blackStones;
+  std::vector<Coord> whiteStones;
   int mx = 3;
   int my = 3;
   int rx = 3;
@@ -513,9 +516,48 @@ int main(int argc, char** argv) {
         rx = std::stoi(argv[++i]);
         ry = std::stoi(argv[++i]);
       }
+    } else if (arg == "--extract") {
+      extractMode = true;
+      // black coords then white coords, 2 ints each, until "w" marker or end
+      while (i + 1 < argc) {
+        const std::string next = argv[i + 1];
+        if (next == "w") {
+          ++i;
+          break;
+        }
+        if (i + 2 >= argc) break;
+        blackStones.push_back({std::stoi(argv[++i]), std::stoi(argv[++i])});
+      }
+      while (i + 1 < argc) {
+        if (i + 2 >= argc) break;
+        whiteStones.push_back({std::stoi(argv[++i]), std::stoi(argv[++i])});
+      }
     } else {
       size = std::stoi(arg);
     }
+  }
+  if (extractMode) {
+    Bits maker = 0;
+    Bits breaker = 0;
+    for (const Coord& c : blackStones) {
+      maker |= Bits{1} << PairingSolver::cellOf(c.x, c.y, size);
+    }
+    for (const Coord& c : whiteStones) {
+      breaker |= Bits{1} << PairingSolver::cellOf(c.x, c.y, size);
+    }
+    PairingSolver solver(size, maker, breaker);
+    if (!solver.solve()) {
+      std::cerr << "no pairing (nodes=" << solver.nodesUsed() << ")\n";
+      return 1;
+    }
+    const std::vector<Pair>& solution = solver.solution();
+    std::cout << "pairs=" << solution.size() << "\n";
+    for (const Pair& pair : solution) {
+      const Coord a{pair.first % size, pair.first / size};
+      const Coord b{pair.second % size, pair.second / size};
+      std::cout << a.x << " " << a.y << " " << b.x << " " << b.y << "\n";
+    }
+    return 0;
   }
   if (sweepMode) {
     return sweep(size);

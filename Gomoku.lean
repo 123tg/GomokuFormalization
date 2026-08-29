@@ -11,6 +11,8 @@ import Gomoku.Search
 import Gomoku.Bounded
 import Gomoku.Engine
 import Gomoku.Generated.CppSmoke
+import Gomoku.Generated.PreventBlackWinMidgame
+import Gomoku.Generated.Draw7x7
 import Gomoku.RuleAudit
 import Gomoku.DefenseAudit
 

@@ -315,7 +315,7 @@ bool findPairing(const Position& p, bool defenderBlack,
 
 std::unordered_map<Position, int, PositionHash> table;
 std::uint64_t expanded = 0;
-const std::uint64_t kNodeBudget = 60'000'000;
+const std::uint64_t kNodeBudget = 500'000'000;
 bool budgetExhausted = false;
 
 // pairing caches (canonical position -> has pairing) to keep it fast
@@ -349,20 +349,94 @@ int solve(const Position& raw) {
     table[p] = 2;
     return 2;
   }
-  // pairing acceleration: if the player to move second-from-now can pair,
-  // the opponent cannot win from here.
-  if (p.turnBlack) {
-    // black to move: if white (defender) has a pairing, black cannot win
-    auto pc = pairingCacheWhite.find(p);
-    if (pc == pairingCacheWhite.end()) {
-      std::vector<std::pair<int, int>> pairs;
-      const bool ok = findPairing(p, false, pairs);
-      pc = pairingCacheWhite.emplace(p, ok).first;
-    }
-    if (pc->second) {
-      // value is white win or draw; determine by sub-search without black win
-      // (we still need exact value; for the probe, record "not black win" as
-      // draw candidate but continue exact search below)
+  // Pairing acceleration: when the defender (the player NOT to move) has a
+  // covering pairing, the mover cannot win from here; the node value is then
+  // restricted to {draw, mover-win}, which prunes the win search below.
+  // Pairings are only probed on late positions (few empty cells), where they
+  // are cheap and likely to exist.
+  const int emptiesCount = static_cast<int>(empties.size());
+  if (emptiesCount <= 25) {
+    if (p.turnBlack) {
+      // white defends: black cannot win
+      auto pc = pairingCacheWhite.find(p);
+      if (pc == pairingCacheWhite.end()) {
+        std::vector<std::pair<int, int>> pairs;
+        const bool ok = findPairing(p, false, pairs);
+        pc = pairingCacheWhite.emplace(p, ok).first;
+      }
+      if (pc->second) {
+        // value in {1, 2}
+        bool sawWhite = true;
+        bool sawDraw = false;
+        bool sawUnknown = false;
+        for (const int m : empties) {
+          Position q = p;
+          q.black |= Bits{1} << m;
+          q.turnBlack = false;
+          const int v = solve(q);
+          if (v == 0) {
+            // pairing says impossible; be safe and return the computed value
+            table[p] = 0;
+            return 0;
+          }
+          if (v == 1) {
+            // all-white so far
+          } else if (v == 2) {
+            sawWhite = false;
+            sawDraw = true;
+          } else {
+            sawWhite = false;
+            sawUnknown = true;
+          }
+        }
+        if (sawUnknown) {
+          table[p] = -1;
+          return -1;
+        }
+        const int result = sawWhite ? 1 : (sawDraw ? 2 : -1);
+        table[p] = result;
+        return result;
+      }
+    } else {
+      // black defends: white cannot win
+      auto pc = pairingCacheBlack.find(p);
+      if (pc == pairingCacheBlack.end()) {
+        std::vector<std::pair<int, int>> pairs;
+        const bool ok = findPairing(p, true, pairs);
+        pc = pairingCacheBlack.emplace(p, ok).first;
+      }
+      if (pc->second) {
+        // value in {0, 2}
+        bool sawBlack = true;
+        bool sawDraw = false;
+        bool sawUnknown = false;
+        for (const int m : empties) {
+          Position q = p;
+          q.white |= Bits{1} << m;
+          q.turnBlack = true;
+          const int v = solve(q);
+          if (v == 1) {
+            table[p] = 1;
+            return 1;
+          }
+          if (v == 0) {
+            // all-black so far
+          } else if (v == 2) {
+            sawBlack = false;
+            sawDraw = true;
+          } else {
+            sawBlack = false;
+            sawUnknown = true;
+          }
+        }
+        if (sawUnknown) {
+          table[p] = -1;
+          return -1;
+        }
+        const int result = sawBlack ? 0 : (sawDraw ? 2 : -1);
+        table[p] = result;
+        return result;
+      }
     }
   }
   // exact AND/OR

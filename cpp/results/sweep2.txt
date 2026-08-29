@@ -1,0 +1,7 @@
+.\cpp\build\find_pairing.exe : no solution for black first move 0 0
+At line:1 char:129
++ ... ng]::new($false); .\cpp\build\find_pairing.exe 7 --sweep 2>&1 | Out-F ...
++                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (no solution for black first move 0 0:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

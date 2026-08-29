@@ -146,9 +146,16 @@ def windowHasWhite (s : Position) (w : List Coord) : Bool :=
 def fiveWindow (c : Coord) (d : Direction) : List Coord :=
   (List.range 5).filterMap (fun n : Nat => step c d (↑n : Int))
 
-/-- 覆盖性（命题形式，可判定）：所有不含白棋的长度 5 窗口都包含一个完整配对。 -/
+/-- 窗口是否完整（全部 5 步都在棋盘内）。只有完整窗口才可能被黑棋占满成五，
+因此覆盖性只要求完整窗口；边界处的不完整窗口（如 (0,0) 沿 diagonalDown）
+不可能包含配对，不应进入覆盖条件。 -/
+def windowFull (c : Coord) (d : Direction) : Bool :=
+  (List.range 5).all (fun n : Nat => (step c d (↑n : Int)).isSome)
+
+/-- 覆盖性（命题形式，可判定）：所有完整且不含白棋的长度 5 窗口都包含一个完整配对。 -/
 def CoversWindows (s : Position) (p : Pairing) : Prop :=
-  ∀ c d, ¬ windowHasWhite s (fiveWindow c d) → windowCovered p (fiveWindow c d) = true
+  ∀ c d, windowFull c d = true →
+    ¬ windowHasWhite s (fiveWindow c d) → windowCovered p (fiveWindow c d) = true
 
 instance coversWindowsDecidable (s : Position) (p : Pairing) :
     Decidable (CoversWindows s p) := by
@@ -173,8 +180,8 @@ theorem coversWindows_mono {p : Pairing} {s t : Position}
     (hval : ValidAt s p) (hmono : ∀ c, s.board.cell c = .stone .white →
       t.board.cell c = .stone .white) :
     CoversWindows t p := by
-  intro c d hnoWhiteT
-  apply hval.2.2
+  intro c d hfull hnoWhiteT
+  apply hval.2.2 c d hfull
   intro hwhiteS
   exact hnoWhiteT (by
     rcases (List.any_eq_true.mp hwhiteS) with ⟨q, hqmem, hqwhite⟩
@@ -611,6 +618,12 @@ theorem no_black_five_of_noBlackPair_and_valid {p : Pairing} {s : Position}
   intro hfive
   rcases five_implies_window_all_black hfive with
     ⟨c, d, qs, hstep, hqblack, hqmem⟩
+  have hfull : Pairing.windowFull c d = true := by
+    unfold Pairing.windowFull
+    rw [List.all_eq_true]
+    intro n hn
+    have hn5 : n < 5 := List.mem_range.mp hn
+    simp [hstep ⟨n, hn5⟩]
   have hnoWhite : ¬ Pairing.windowHasWhite s (Pairing.fiveWindow c d) := by
     intro hwhite
     rcases (List.any_eq_true.mp hwhite) with ⟨q, hqwin, hqwhite⟩
@@ -622,7 +635,7 @@ theorem no_black_five_of_noBlackPair_and_valid {p : Pairing} {s : Position}
     have hqb : s.board.cell q = .stone .black := by
       simpa [hsame] using hqblack ⟨n, hn5⟩
     simp [hqb, hqwhite'] at *
-  have hcovered := hval.2.2 c d hnoWhite
+  have hcovered := hval.2.2 c d hfull hnoWhite
   have hpair := (Pairing.windowCovered_true_iff p (Pairing.fiveWindow c d)).mp hcovered
   rcases hpair with ⟨pair, hppair, hmem1, hmem2⟩
   rcases (List.mem_filterMap.mp hmem1) with ⟨i, hi⟩
